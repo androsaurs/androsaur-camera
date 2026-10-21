@@ -3,6 +3,7 @@ package dev.hram.mobileledger
 import android.util.Log
 import org.json.JSONObject
 import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -39,6 +40,7 @@ class PhoneServer(private val camera: CameraService, private val token: String) 
 
     private fun handle(socket: Socket) {
         socket.soTimeout = 5000
+        socket.tcpNoDelay = true
         try {
             val input = BufferedInputStream(socket.getInputStream())
             fun line(): String {
@@ -102,6 +104,30 @@ class PhoneServer(private val camera: CameraService, private val token: String) 
                     val ok = camera.setTorch(body.getBoolean("enabled"))
                     json(socket, if (ok) 200 else 400, if (ok) JSONObject().put("ok", true) else JSONObject().put("error", "torch_unavailable"))
                 }
+                "GET /focus" -> json(socket, 200, camera.focusStatus())
+                "POST /focus" -> {
+                    val action = body.getString("action")
+                    val x = body.opt("x") ?: .5
+                    val y = body.opt("y") ?: .5
+                    require(x is Number && y is Number)
+                    val (code, value) = camera.focus(action, x.toFloat(), y.toFloat())
+                    json(socket, code, value)
+                }
+                "POST /calibration/tolerance" -> {
+                    val percent = body.opt("tolerancePercent")
+                    if (percent !is Number || !camera.setCalibrationTolerancePercent(percent.toDouble())) {
+                        json(socket, 400, JSONObject().put("error", "invalid_calibration_tolerance")
+                            .put("minPercent", 0.1).put("maxPercent", 5.0))
+                    } else json(socket, 200, JSONObject().put("tolerancePercent", percent.toDouble()))
+                }
+                "POST /calibration/session" -> {
+                    val (code, value) = camera.calibrationSession(identifier(body.getString("clientId")), body.getBoolean("active"))
+                    json(socket, code, value)
+                }
+                "GET /calibration/frame" -> {
+                    val (code, value) = camera.calibrationPacket()
+                    json(socket, code, value)
+                }
                 "POST /capture" -> {
                     val id = identifier(body.getString("requestId"))
                     val client = identifier(body.getString("clientId"))
@@ -142,6 +168,9 @@ class PhoneServer(private val camera: CameraService, private val token: String) 
             extra.forEach { (key, value) -> append("$key: $value\r\n") }
             append("\r\n")
         }
-        socket.getOutputStream().apply { write(headers.toByteArray()); write(bytes); flush() }
+        // Send headers with the body; avoid a tiny packet followed by a delayed-ACK/Nagle wait.
+        BufferedOutputStream(socket.getOutputStream(), 64 * 1024).apply {
+            write(headers.toByteArray(Charsets.US_ASCII)); write(bytes); flush()
+        }
     }
 }
