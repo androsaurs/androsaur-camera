@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mobile Ledger — документ-камера</title>
+<style>
+:root{--paper:#f5f3ec;--ink:#20352e;--green:#24654a;--line:#d7ded4;--soft:#e7ece3}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.5 system-ui,sans-serif}main{max-width:1180px;margin:auto;padding:28px}header{display:flex;justify-content:space-between;align-items:center;gap:20px;border-bottom:1px solid var(--line);padding-bottom:20px}.brand{font:12px monospace;letter-spacing:.16em}h1{font:normal clamp(26px,4vw,42px)/1.2 Georgia,serif;margin:12px 0}.badge{background:var(--soft);padding:8px 12px;border-radius:20px;font-size:13px}.layout{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(270px,1fr);gap:28px;margin-top:28px}.viewer{background:#182a24;border-radius:12px;min-height:440px;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}.viewer img{width:100%;max-height:70vh;object-fit:contain}.empty{color:#b7c8b9;position:absolute;pointer-events:none}.viewer img:not([src]){visibility:hidden}section.controls{background:#fffdf7;border:1px solid var(--line);border-radius:12px;padding:24px}label{display:block;margin:18px 0 8px;font-size:14px}input,select,button{font:inherit;border-radius:8px;padding:12px;width:100%;border:1px solid var(--line)}button{background:var(--green);color:white;cursor:pointer;border:none;transition:background .2s,transform .2s}button:hover{background:#184c36}button:active{transform:translateY(1px)}button:disabled{opacity:.45;cursor:wait}button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #bc8a34;outline-offset:3px}input[type=checkbox]{width:auto;margin-right:8px}.shoot{margin-top:22px;font-size:20px}.hint{font-size:13px;color:#587063}.error{color:#9b3527;min-height:26px}#result{margin-top:26px;border-top:1px solid var(--line);padding-top:20px}#photo{max-width:100%;max-height:270px;object-fit:contain}a{color:var(--green)}[hidden]{display:none!important}#connect{margin-top:12px}footer{margin-top:24px;font-size:12px;color:#587063} @media(max-width:760px){main{padding:18px}.layout{grid-template-columns:1fr}.viewer{min-height:280px}header{align-items:flex-start}.badge{max-width:180px}}
+</style>
+<main>
+<header><div><div class="brand">PAPER / LEDGER · CAMERA LAB</div><h1>Документ в кадре.</h1></div><span class="badge" id="status" role="status">Подключение…</span></header>
+<div class="layout"><section><div class="viewer"><span id="empty" class="empty">Ожидаем изображение с телефона</span><img id="preview" alt="Превью документа с камеры"></div><p class="hint">Поместите лист целиком в кадр. Снимок сохраняется в исходном разрешении камеры.</p></section>
+<section class="controls"><h2 style="margin:0;font-size:20px">Пульт камеры</h2>
+<div id="auth" hidden><label for="token">Код доступа с телефона</label><input id="token" type="password" autocomplete="off"><button id="connect">Подключиться</button></div>
+<label for="resolution">Разрешение снимка</label><select id="resolution"><option value="">Автоматически · ориентир A4</option></select>
+<label><input type="checkbox" id="torch">Постоянная подсветка</label>
+<button class="shoot" id="shoot" disabled>Снять документ</button><p class="error" id="error" role="alert"></p>
+<div id="result" hidden><h3 style="font-size:16px">Последний снимок</h3><img id="photo" alt="Полученная фотография"><p id="metrics" class="hint"></p><a id="download" download="document.jpg">Скачать оригинал JPEG</a><p class="hint">Файл принят браузером. Копия на телефоне удаляется после подтверждения.</p></div>
+</section></div><footer>Прототип · локальный сервер телефона · документы и OCR остаются в paper-ledger</footer>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let token=location.hash.slice(1)||sessionStorage.getItem('cameraToken')||'';
+if(location.hash)history.replaceState(null,'',location.pathname);
+// A duplicated tab inherits sessionStorage. Generate a fresh page identity instead.
+const clientId='tab-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
+let pending=null,locked=false,previewUrl=null,photoUrl=null,session=null,ready=false;
+const delay=ms=>new Promise(r=>setTimeout(r,ms));
+async function api(path,body){const response=await fetch(path,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,cache:'no-store',signal:AbortSignal.timeout(6000)});if(response.status===401){$('auth').hidden=false;throw Error('Нужен код доступа с телефона')}return response}
+$('connect').onclick=()=>{token=$('token').value.trim();sessionStorage.setItem('cameraToken',token);$('auth').hidden=true};
+if(token)sessionStorage.setItem('cameraToken',token);else $('auth').hidden=false;
+$('torch').onchange=async()=>{try{const r=await api('/torch',{enabled:$('torch').checked});if(!r.ok)throw Error('Не удалось изменить подсветку')}catch(e){$('error').textContent=e.message}};
+async function updateStatus(){while(true){try{const r=await api('/status');if(!r.ok)throw Error('Камера недоступна');const s=await r.json();if(session&&session!==s.session){pending=null;$('error').textContent='Служба перезапущена. Повторите съёмку.'}session=s.session;ready=s.state==='ready';$('status').textContent=({ready:'Камера готова',idle:'Включаем камеру…',starting:'Запуск…',needs_user:'Откройте приложение на телефоне'})[s.state]||s.state;$('shoot').disabled=locked||s.busy||!ready;$('torch').checked=s.torch;const old=$('resolution').value;const signature=JSON.stringify(s.resolutions);if($('resolution').dataset.signature!==signature){$('resolution').dataset.signature=signature;$('resolution').replaceChildren(new Option('Автоматически · ориентир A4',''),...s.resolutions.map(r=>new Option(r.width+' × '+r.height+' · '+(r.width*r.height/1e6).toFixed(1)+' Мп',r.width+'x'+r.height)));$('resolution').value=old}if(s.error)$('error').textContent=s.error;}catch(e){ready=false;$('status').textContent='Нет связи с камерой';$('shoot').disabled=true;}await delay(1500)}}
+async function preview(){while(true){try{const r=await api('/frame.jpg');if(r.status===200){const next=URL.createObjectURL(await r.blob());$('preview').src=next;$('empty').hidden=true;if(previewUrl)URL.revokeObjectURL(previewUrl);previewUrl=next}}catch(e){}await delay(400)}}
+$('shoot').onclick=async()=>{
+ locked=true;$('shoot').disabled=true;$('error').textContent='';
+ const started=performance.now(),requestId='shot-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
+ const size=$('resolution').value.split('x').map(Number);const command={requestId,clientId,...(size.length===2?{width:size[0],height:size[1]}:{})};pending=command;
+ try{
+  let accepted=false;
+  while(pending===command&&!accepted){try{const r=await api('/capture',command);if(!r.ok){const e=await r.json();throw Object.assign(Error(e.error),{terminal:true})}accepted=true}catch(e){if(e.terminal)throw e;$('error').textContent='Нет связи. Повторяем тот же запрос…';await delay(1000)}}
+  while(pending===command){let r,blob;try{r=await api('/result?requestId='+requestId+'&clientId='+clientId);if(r.status===200)blob=await r.blob()}catch(e){$('error').textContent='Связь прервалась. Ожидаем снимок…';await delay(1000);continue}if(r.status===202){await delay(150);continue}if(!r.ok)throw Error((await r.json()).error);const file=new File([blob],'document-'+requestId+'.jpg',{type:'image/jpeg'});
+   // Same boundary as the future paper-ledger adapter: a complete File owned by this tab.
+   window.lastCameraFile=file;const next=URL.createObjectURL(file);$('photo').src=next;$('download').href=next;if(photoUrl)URL.revokeObjectURL(photoUrl);photoUrl=next;$('result').hidden=false;$('error').textContent='';$('metrics').textContent=((performance.now()-started)/1000).toFixed(2)+' с · '+(file.size/1024/1024).toFixed(2)+' МБ · фокус: '+r.headers.get('X-Focus-Status');
+   while(pending===command){try{const ack=await api('/ack',{requestId,clientId});if(ack.ok||ack.status===410)break}catch(e){}await delay(1000)}break;
+  }
+ }catch(e){$('error').textContent=e.message}finally{pending=null;locked=false;$('shoot').disabled=!ready}
+};
+// Browsers cannot reliably signal a closed tab. Temporary disconnect never cancels a request.
+window.addEventListener('pagehide',()=>{if(pending)fetch('/cancel',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({requestId:pending.requestId,clientId}),keepalive:true}).catch(()=>{})});
+updateStatus();preview();
+</script>
+</html>

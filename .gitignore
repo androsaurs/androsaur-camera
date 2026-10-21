@@ -1,0 +1,21 @@
+.gradle/
+.kotlin/
+**/build/
+local.properties
+artifacts/
+
+# Local credentials and signing material
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+
+# IDE and OS files
+.idea/
+*.iml
+.DS_Store
