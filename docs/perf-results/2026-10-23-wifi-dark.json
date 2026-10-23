@@ -1,0 +1,732 @@
+{
+  "date": "2026-10-23T03:34:15.261Z",
+  "label": "wifi-dark",
+  "sections": [
+    "preview",
+    "capture",
+    "sustained",
+    "contention",
+    "mcp"
+  ],
+  "method": {
+    "host": {
+      "node": "v24.13.0",
+      "platform": "linux",
+      "clock": "performance.now() on the host, so every time includes the transport (USB forward or Wi-Fi) and the host HTTP stack"
+    },
+    "percentiles": "sorted ascending, p = element at index floor(p * n), clamped to n-1 (no interpolation); mean is arithmetic",
+    "uniquePreviewFrame": "a /frame.jpg response whose X-Frame-Id differs from the previous response (MD5 of the body when the header is absent); uniqueFps = unique frames / elapsed seconds; requestsPerSec counts every 200 response",
+    "frameAge": "X-Frame-Age-Ms: how old the frame was inside the phone when it answered (excludes the transfer time); framesProducedPerSec = (last id - first id + 1) / elapsed",
+    "previewLoop": "sequential GET /frame.jpg, next request starts when the previous body is complete; 202 (warming up) answers are retried after 30 ms and not counted",
+    "previewSections": {
+      "warmupSeconds": 3,
+      "singleViewerSeconds": 20,
+      "concurrentViewers": [
+        3,
+        6
+      ],
+      "concurrentSeconds": 15,
+      "mcpPreviewCalls": 15
+    },
+    "captureCycle": "POST /capture, then GET /result every 20 ms until not 202, then POST /ack. acceptMs = POST answered; readyMs = from POST start to the headers of the 200 /result; downloadMs = headers to body complete; totalMs = POST start to body complete (ACK excluded); captureMs = X-Capture-Ms header measured on the phone (focus step + exposure + save)",
+    "readyGranularityMs": 20,
+    "captureByResolution": {
+      "shotsPerResolution": 10,
+      "firstAfterSwitch": "one extra shot right after changing resolution, reported separately",
+      "sizes": "advertised 4:3 sizes nearest to widths 4080, 3264, 2592, 1920, 1280",
+      "shotsPerMinute": "shots / wall time of the 10 back-to-back cycles"
+    },
+    "previewWhileShooting": {
+      "shots": 10,
+      "pauseBetweenShotsMs": 200,
+      "leadInMs": 1500,
+      "insideShots": "unique preview frames whose arrival lies between POST /capture and the end of the cycle, divided by the summed duration of those windows"
+    },
+    "lighting": "recorded in report.lighting: torch state and the metrics of one sample shot taken after the torch has had 2.5 s to settle. Frame rate depends on light: in a dim scene auto-exposure uses long exposures and the camera cannot deliver more than about 1000 / exposure ms frames per second",
+    "statusProbes": 40,
+    "sustained": {
+      "shots": 60,
+      "blocks": "p50 of totalMs over shots 1-20, 21-40, 41-60 to expose slow-down by heat"
+    },
+    "contention": {
+      "rounds": 10,
+      "how": "two clients POST /capture at the same moment; the loser retries every 50 ms after the winner ACKs; secondClientWait is that retry time"
+    },
+    "mcp": {
+      "takePhoto": 15,
+      "takePhotoWithPreview": 5,
+      "viewCapture": 5,
+      "viewRegion": 5,
+      "regionFractions": "x=0.3 y=0.3 w=0.3 h=0.3",
+      "getCaptureInfo": 10,
+      "linkDownloads": 5,
+      "ms": "whole JSON-RPC round trip including phone-side metrics, storage and base64"
+    }
+  },
+  "environment": {
+    "model": "23053RN02Y",
+    "android": "15",
+    "appSha256": "c2257808e409ba0c41c35c2994c35c418eac00bd77478ec12b429b678b833bfa",
+    "gitHead": "2e73335",
+    "gitDirty": true,
+    "resolutionsAdvertised": 34,
+    "largest": {
+      "width": 4080,
+      "height": 3072
+    },
+    "deviceBefore": {
+      "battery": 99,
+      "batteryTempC": 35,
+      "pssMb": 81.5,
+      "pid": "4275",
+      "wakefulness": "Asleep",
+      "wifiRssiDbm": -63,
+      "wifiLinkMbps": 433
+    },
+    "deviceAfter": {
+      "battery": 99,
+      "batteryTempC": 35,
+      "pssMb": 82.4,
+      "pid": "4275",
+      "wakefulness": "Asleep",
+      "wifiRssiDbm": -64,
+      "wifiLinkMbps": 433
+    }
+  },
+  "lighting": {
+    "torch": "off",
+    "sample": {
+      "meanBrightness": 142.2,
+      "contrast": 31.5,
+      "sharpness": 121,
+      "captureMs": 601,
+      "bytes": 3222935
+    }
+  },
+  "preview": {
+    "singleViewer": {
+      "seconds": 20,
+      "requests": 843,
+      "requestsPerSec": 42.1,
+      "uniqueFrames": 324,
+      "uniqueFps": 16.2,
+      "duplicateShare": 0.62,
+      "requestMs": {
+        "n": 843,
+        "min": 15,
+        "p50": 22.2,
+        "p90": 28.8,
+        "p95": 31.4,
+        "max": 331.1,
+        "mean": 23.7
+      },
+      "uniqueFrameGapMs": {
+        "n": 323,
+        "min": 22.8,
+        "p50": 60.2,
+        "p90": 73.2,
+        "p95": 78,
+        "max": 658.9,
+        "mean": 61.9
+      },
+      "frameBytes": {
+        "n": 843,
+        "min": 16677,
+        "p50": 16751,
+        "p90": 16806,
+        "p95": 16822,
+        "max": 16869,
+        "mean": 16756.9
+      },
+      "framesProducedPerSec": 16.69,
+      "frameAgeMsAtResponse": {
+        "n": 843,
+        "min": 0,
+        "p50": 29,
+        "p90": 54,
+        "p95": 57,
+        "max": 64,
+        "mean": 29.3
+      }
+    },
+    "concurrentViewers": [
+      {
+        "viewers": 3,
+        "perViewerUniqueFps": [
+          15.65,
+          15.66,
+          15.65
+        ],
+        "requestMs": {
+          "n": 6,
+          "min": 20.3,
+          "p50": 26.8,
+          "p90": 27.6,
+          "p95": 27.6,
+          "max": 27.6,
+          "mean": 23.7
+        }
+      },
+      {
+        "viewers": 6,
+        "perViewerUniqueFps": [
+          13.46,
+          14.19,
+          14.19,
+          16.53,
+          15.58,
+          13.33
+        ],
+        "requestMs": {
+          "n": 12,
+          "min": 24.7,
+          "p50": 35,
+          "p90": 36,
+          "p95": 37.1,
+          "max": 37.1,
+          "mean": 30.6
+        }
+      }
+    ],
+    "mcpPreviewToolMs": {
+      "n": 15,
+      "min": 19.1,
+      "p50": 23.7,
+      "p90": 26.9,
+      "p95": 32.8,
+      "max": 32.8,
+      "mean": 24.4
+    }
+  },
+  "captureByResolution": [
+    {
+      "requested": "4080x3060",
+      "firstAfterSwitchMs": 1014.1,
+      "shots": 10,
+      "failed": 0,
+      "totalMs": {
+        "n": 10,
+        "min": 886.3,
+        "p50": 987.1,
+        "p90": 1088,
+        "p95": 1088,
+        "max": 1088,
+        "mean": 983.1
+      },
+      "readyMs": {
+        "n": 10,
+        "min": 585.7,
+        "p50": 625.9,
+        "p90": 652.3,
+        "p95": 652.3,
+        "max": 652.3,
+        "mean": 621.1
+      },
+      "downloadMs": {
+        "n": 10,
+        "min": 253.7,
+        "p50": 359.3,
+        "p90": 444.4,
+        "p95": 444.4,
+        "max": 444.4,
+        "mean": 362
+      },
+      "captureMs": {
+        "n": 10,
+        "min": 558,
+        "p50": 599,
+        "p90": 615,
+        "p95": 615,
+        "max": 615,
+        "mean": 587.2
+      },
+      "mbPerShot": 3.22,
+      "downloadMBps": 8.9,
+      "dims": [
+        "4080x3060"
+      ],
+      "focus": {
+        "on-demand": 10
+      },
+      "shotsPerMinute": 60.1
+    },
+    {
+      "requested": "3264x2448",
+      "firstAfterSwitchMs": 1542.6,
+      "shots": 10,
+      "failed": 0,
+      "totalMs": {
+        "n": 10,
+        "min": 806.1,
+        "p50": 821.2,
+        "p90": 840.7,
+        "p95": 840.7,
+        "max": 840.7,
+        "mean": 823.4
+      },
+      "readyMs": {
+        "n": 10,
+        "min": 579.8,
+        "p50": 605.5,
+        "p90": 616.5,
+        "p95": 616.5,
+        "max": 616.5,
+        "mean": 599.5
+      },
+      "downloadMs": {
+        "n": 10,
+        "min": 209.8,
+        "p50": 225.2,
+        "p90": 235.1,
+        "p95": 235.1,
+        "max": 235.1,
+        "mean": 223.8
+      },
+      "captureMs": {
+        "n": 10,
+        "min": 545,
+        "p50": 570,
+        "p90": 580,
+        "p95": 580,
+        "max": 580,
+        "mean": 565.1
+      },
+      "mbPerShot": 2.12,
+      "downloadMBps": 9.46,
+      "dims": [
+        "3264x2448"
+      ],
+      "focus": {
+        "on-demand": 10
+      },
+      "shotsPerMinute": 71.6
+    },
+    {
+      "requested": "2560x1920",
+      "firstAfterSwitchMs": 1363.7,
+      "shots": 10,
+      "failed": 0,
+      "totalMs": {
+        "n": 10,
+        "min": 683.9,
+        "p50": 719.1,
+        "p90": 819.7,
+        "p95": 819.7,
+        "max": 819.7,
+        "mean": 719.2
+      },
+      "readyMs": {
+        "n": 10,
+        "min": 555.3,
+        "p50": 579.5,
+        "p90": 611.7,
+        "p95": 611.7,
+        "max": 611.7,
+        "mean": 581.3
+      },
+      "downloadMs": {
+        "n": 10,
+        "min": 110.2,
+        "p50": 131.4,
+        "p90": 244,
+        "p95": 244,
+        "max": 244,
+        "mean": 137.9
+      },
+      "captureMs": {
+        "n": 10,
+        "min": 535,
+        "p50": 549,
+        "p90": 564,
+        "p95": 564,
+        "max": 564,
+        "mean": 548.3
+      },
+      "mbPerShot": 1.35,
+      "downloadMBps": 9.78,
+      "dims": [
+        "2560x1920"
+      ],
+      "focus": {
+        "on-demand": 10
+      },
+      "shotsPerMinute": 81.8
+    },
+    {
+      "requested": "1920x1440",
+      "firstAfterSwitchMs": 1406.4,
+      "shots": 10,
+      "failed": 0,
+      "totalMs": {
+        "n": 10,
+        "min": 599.5,
+        "p50": 641.6,
+        "p90": 680.8,
+        "p95": 680.8,
+        "max": 680.8,
+        "mean": 634.5
+      },
+      "readyMs": {
+        "n": 10,
+        "min": 525.2,
+        "p50": 563.1,
+        "p90": 578.1,
+        "p95": 578.1,
+        "max": 578.1,
+        "mean": 557
+      },
+      "downloadMs": {
+        "n": 10,
+        "min": 66.6,
+        "p50": 74.3,
+        "p90": 105.6,
+        "p95": 105.6,
+        "max": 105.6,
+        "mean": 77.5
+      },
+      "captureMs": {
+        "n": 10,
+        "min": 501,
+        "p50": 525,
+        "p90": 551,
+        "p95": 551,
+        "max": 551,
+        "mean": 523.7
+      },
+      "mbPerShot": 0.76,
+      "downloadMBps": 9.86,
+      "dims": [
+        "1920x1440"
+      ],
+      "focus": {
+        "on-demand": 10
+      },
+      "shotsPerMinute": 92.7
+    },
+    {
+      "requested": "1280x960",
+      "firstAfterSwitchMs": 1263.4,
+      "shots": 10,
+      "failed": 0,
+      "totalMs": {
+        "n": 10,
+        "min": 542.8,
+        "p50": 591.3,
+        "p90": 640.1,
+        "p95": 640.1,
+        "max": 640.1,
+        "mean": 586.4
+      },
+      "readyMs": {
+        "n": 10,
+        "min": 506.1,
+        "p50": 546.2,
+        "p90": 581.5,
+        "p95": 581.5,
+        "max": 581.5,
+        "mean": 541.8
+      },
+      "downloadMs": {
+        "n": 10,
+        "min": 35.6,
+        "p50": 37.5,
+        "p90": 93.9,
+        "p95": 93.9,
+        "max": 93.9,
+        "mean": 44.6
+      },
+      "captureMs": {
+        "n": 10,
+        "min": 483,
+        "p50": 522,
+        "p90": 543,
+        "p95": 543,
+        "max": 543,
+        "mean": 516.5
+      },
+      "mbPerShot": 0.33,
+      "downloadMBps": 7.52,
+      "dims": [
+        "1280x960"
+      ],
+      "focus": {
+        "on-demand": 10
+      },
+      "shotsPerMinute": 99.8
+    }
+  ],
+  "previewWhileShooting": {
+    "uniqueFpsInsideShots": 11.79,
+    "uniqueFpsOutsideShots": 15.75,
+    "uniqueFrameGapMs": {
+      "n": 173,
+      "min": 14.3,
+      "p50": 60.4,
+      "p90": 135.4,
+      "p95": 211.2,
+      "max": 668.8,
+      "mean": 77.9
+    },
+    "shots": {
+      "shots": 10,
+      "failed": 0,
+      "totalMs": {
+        "n": 10,
+        "min": 885.6,
+        "p50": 950.8,
+        "p90": 1115.1,
+        "p95": 1115.1,
+        "max": 1115.1,
+        "mean": 968.4
+      },
+      "readyMs": {
+        "n": 10,
+        "min": 592.1,
+        "p50": 656.9,
+        "p90": 815.8,
+        "p95": 815.8,
+        "max": 815.8,
+        "mean": 656.8
+      },
+      "downloadMs": {
+        "n": 10,
+        "min": 266.7,
+        "p50": 297.6,
+        "p90": 477.9,
+        "p95": 477.9,
+        "max": 477.9,
+        "mean": 311.5
+      },
+      "captureMs": {
+        "n": 10,
+        "min": 570,
+        "p50": 606,
+        "p90": 641,
+        "p95": 641,
+        "max": 641,
+        "mean": 605.8
+      },
+      "mbPerShot": 3.22,
+      "downloadMBps": 10.35,
+      "dims": [
+        "4080x3060"
+      ],
+      "focus": {
+        "on-demand": 10
+      }
+    }
+  },
+  "statusRequestMs": {
+    "n": 40,
+    "min": 10.9,
+    "p50": 15.7,
+    "p90": 17.7,
+    "p95": 19.9,
+    "max": 20.8,
+    "mean": 15.4
+  },
+  "contention": {
+    "rounds": 10,
+    "exactlyOneAccepted": true,
+    "loserErrors": [
+      "409:camera_busy"
+    ],
+    "secondClientWaitAfterWinnerAckMs": {
+      "n": 10,
+      "min": 10.5,
+      "p50": 12.1,
+      "p90": 12.8,
+      "p95": 12.8,
+      "max": 12.8,
+      "mean": 11.6
+    }
+  },
+  "mcp": {
+    "takePhotoMs": {
+      "n": 15,
+      "min": 749.5,
+      "p50": 837.7,
+      "p90": 1911.1,
+      "p95": 1945.9,
+      "max": 1945.9,
+      "mean": 1040
+    },
+    "takePhotoCaptureMs": {
+      "n": 15,
+      "min": 558,
+      "p50": 578,
+      "p90": 612,
+      "p95": 614,
+      "max": 614,
+      "mean": 585
+    },
+    "takePhotoFailed": 0,
+    "takePhotoWithPreviewMs": {
+      "n": 5,
+      "min": 924,
+      "p50": 1213.3,
+      "p90": 1332.8,
+      "p95": 1332.8,
+      "max": 1332.8,
+      "mean": 1166.6
+    },
+    "previewResponseKb": {
+      "n": 5,
+      "min": 120.8,
+      "p50": 120.9,
+      "p90": 121,
+      "p95": 121,
+      "max": 121,
+      "mean": 120.9
+    },
+    "viewCaptureMs": {
+      "n": 5,
+      "min": 166.5,
+      "p50": 206.7,
+      "p90": 206.9,
+      "p95": 206.9,
+      "max": 206.9,
+      "mean": 197.4
+    },
+    "viewCaptureKb": {
+      "n": 5,
+      "min": 120.4,
+      "p50": 120.4,
+      "p90": 120.4,
+      "p95": 120.4,
+      "max": 120.4,
+      "mean": 120.4
+    },
+    "viewRegionMs": {
+      "n": 5,
+      "min": 177.1,
+      "p50": 211.9,
+      "p90": 449.9,
+      "p95": 449.9,
+      "max": 449.9,
+      "mean": 292.6
+    },
+    "viewRegionKb": {
+      "n": 5,
+      "min": 135.3,
+      "p50": 135.3,
+      "p90": 135.3,
+      "p95": 135.3,
+      "max": 135.3,
+      "mean": 135.3
+    },
+    "getCaptureInfoMs": {
+      "n": 10,
+      "min": 14.8,
+      "p50": 15.2,
+      "p90": 18,
+      "p95": 18,
+      "max": 18,
+      "mean": 15.8
+    },
+    "linkDownloadMs": {
+      "n": 5,
+      "min": 274.9,
+      "p50": 324.2,
+      "p90": 441.4,
+      "p95": 441.4,
+      "max": 441.4,
+      "mean": 349.8
+    },
+    "linkDownloadMBps": {
+      "n": 5,
+      "min": 7.3,
+      "p50": 9.9,
+      "p90": 11.7,
+      "p95": 11.7,
+      "max": 11.7,
+      "mean": 9.6
+    },
+    "linkDownloadMb": 3.22
+  },
+  "sustained": {
+    "resolution": "4080x3060",
+    "shots": 60,
+    "failed": 0,
+    "totalMs": {
+      "n": 60,
+      "min": 851.2,
+      "p50": 941.3,
+      "p90": 995.1,
+      "p95": 1081.3,
+      "max": 1814.7,
+      "mean": 960.2
+    },
+    "readyMs": {
+      "n": 60,
+      "min": 586.7,
+      "p50": 619.8,
+      "p90": 652.4,
+      "p95": 658.2,
+      "max": 1154.9,
+      "mean": 633
+    },
+    "downloadMs": {
+      "n": 60,
+      "min": 238.1,
+      "p50": 310.2,
+      "p90": 359.5,
+      "p95": 407.8,
+      "max": 1228,
+      "mean": 327.2
+    },
+    "captureMs": {
+      "n": 60,
+      "min": 560,
+      "p50": 588,
+      "p90": 616,
+      "p95": 618,
+      "max": 619,
+      "mean": 589.1
+    },
+    "mbPerShot": 3.23,
+    "downloadMBps": 9.86,
+    "dims": [
+      "4080x3060"
+    ],
+    "focus": {
+      "on-demand": 60
+    },
+    "shotsPerMinute": 61.3,
+    "elapsedSeconds": 58.7,
+    "blocksP50": [
+      {
+        "shots": "1-20",
+        "totalMsP50": 920.5
+      },
+      {
+        "shots": "21-40",
+        "totalMsP50": 950.1
+      },
+      {
+        "shots": "41-60",
+        "totalMsP50": 943.5
+      }
+    ],
+    "deviceBefore": {
+      "battery": 99,
+      "batteryTempC": 35,
+      "pssMb": 101.6,
+      "pid": "4275",
+      "wakefulness": "Asleep",
+      "wifiRssiDbm": -63,
+      "wifiLinkMbps": 433
+    },
+    "deviceAfter": {
+      "battery": 99,
+      "batteryTempC": 35,
+      "pssMb": 105.7,
+      "pid": "4275",
+      "wakefulness": "Asleep",
+      "wifiRssiDbm": -65,
+      "wifiLinkMbps": 433
+    }
+  },
+  "crashLog": [],
+  "processSameAsAtStart": true
+}
