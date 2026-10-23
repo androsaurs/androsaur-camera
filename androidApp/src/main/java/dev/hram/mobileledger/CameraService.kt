@@ -73,10 +73,12 @@ class CameraService : Service(), LifecycleOwner {
     private var calibrationGeneration = 0
     inner class LocalBinder : Binder() { val service: CameraService get() = this@CameraService }
     private val photoDir by lazy { File(filesDir, "captures").apply { mkdirs() } }
+    val agentStore by lazy { AgentStore(File(filesDir, "agent")) }
     private val idleCheck = object : Runnable {
         override fun run() {
             val changed = synchronized(gate) { updateCalibrationModeLocked() }
             if (changed) reconfigureCalibration()
+            agentStore.sweep()
             val idle = synchronized(gate) { !ledger.capturing }
             if (idle && !calibrationMode && SystemClock.elapsedRealtime() - lastSeen > 15_000 && camera != null) {
                 focusController.detach(); provider?.unbindAll(); camera = null; capture = null; latestFrame = null
@@ -100,7 +102,8 @@ class CameraService : Service(), LifecycleOwner {
         else startForeground(1, notification)
         lifecycleRegistry.currentState = Lifecycle.State.STARTED
         photoDir.listFiles()?.forEach { it.delete() }
-        server = PhoneServer(this, MainActivity.token(this))
+        agentStore
+        server =PhoneServer(this, MainActivity.token(this))
         server.start()
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
@@ -128,6 +131,7 @@ class CameraService : Service(), LifecycleOwner {
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         executor.shutdownNow()
         synchronized(gate) { result?.delete() }
+        agentStore.clear()
         super.onDestroy()
     }
 
