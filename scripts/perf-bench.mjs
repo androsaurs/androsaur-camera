@@ -1,5 +1,6 @@
 // Load and speed benchmark of the phone camera: preview frames, full-resolution captures, MCP tools.
-// Usage: ANDROID_SERIAL=<device> LABEL=usb|wifi CAMERA_BASE=http://host:port node scripts/perf-bench.mjs [sections]
+// Usage: ANDROID_SERIAL=<device> LABEL=usb|wifi CAMERA_BASE=http://host:port [TORCH=on] node scripts/perf-bench.mjs [sections]
+// TORCH=on lights the scene with the phone torch for the whole run (the report records the lighting); off by default.
 // sections: preview,capture,sustained,contention,mcp (default: all). No photo contents or tokens are written.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
@@ -8,6 +9,7 @@ import {mkdir, writeFile} from 'node:fs/promises';
 
 const base = process.env.CAMERA_BASE || 'http://127.0.0.1:18088';
 const label = process.env.LABEL || 'usb';
+const torchOn = process.env.TORCH === 'on';
 const sections = new Set((process.argv[2] || 'preview,capture,sustained,contention,mcp').split(','));
 const app = 'dev.hram.mobileledger.prototype';
 const adb = (...args) => execFileSync('adb', args, {encoding:'utf8', maxBuffer:256 * 1024 * 1024});
@@ -75,13 +77,15 @@ function device() {
 const report = {date:new Date().toISOString(), label, sections:[...sections], method:{
   host:{node:process.version, platform:process.platform, clock:'performance.now() on the host, so every time includes the transport (USB forward or Wi-Fi) and the host HTTP stack'},
   percentiles:'sorted ascending, p = element at index floor(p * n), clamped to n-1 (no interpolation); mean is arithmetic',
-  uniquePreviewFrame:'a /frame.jpg response whose MD5 differs from the previous response; uniqueFps = unique frames / elapsed seconds; requestsPerSec counts every 200 response',
+  uniquePreviewFrame:'a /frame.jpg response whose X-Frame-Id differs from the previous response (MD5 of the body when the header is absent); uniqueFps = unique frames / elapsed seconds; requestsPerSec counts every 200 response',
+  frameAge:'X-Frame-Age-Ms: how old the frame was inside the phone when it answered (excludes the transfer time); framesProducedPerSec = (last id - first id + 1) / elapsed',
   previewLoop:'sequential GET /frame.jpg, next request starts when the previous body is complete; 202 (warming up) answers are retried after 30 ms and not counted',
   previewSections:{warmupSeconds:3, singleViewerSeconds:20, concurrentViewers:[3, 6], concurrentSeconds:15, mcpPreviewCalls:15},
   captureCycle:'POST /capture, then GET /result every 20 ms until not 202, then POST /ack. acceptMs = POST answered; readyMs = from POST start to the headers of the 200 /result; downloadMs = headers to body complete; totalMs = POST start to body complete (ACK excluded); captureMs = X-Capture-Ms header measured on the phone (focus step + exposure + save)',
   readyGranularityMs:20,
   captureByResolution:{shotsPerResolution:10, firstAfterSwitch:'one extra shot right after changing resolution, reported separately', sizes:'advertised 4:3 sizes nearest to widths 4080, 3264, 2592, 1920, 1280', shotsPerMinute:'shots / wall time of the 10 back-to-back cycles'},
   previewWhileShooting:{shots:10, pauseBetweenShotsMs:200, leadInMs:1500, insideShots:'unique preview frames whose arrival lies between POST /capture and the end of the cycle, divided by the summed duration of those windows'},
+  lighting:'recorded in report.lighting: torch state and the metrics of one sample shot taken after the torch has had 2.5 s to settle. Frame rate depends on light: in a dim scene auto-exposure uses long exposures and the camera cannot deliver more than about 1000 / exposure ms frames per second',
   statusProbes:40,
   sustained:{shots:60, blocks:'p50 of totalMs over shots 1-20, 21-40, 41-60 to expose slow-down by heat'},
   contention:{rounds:10, how:'two clients POST /capture at the same moment; the loser retries every 50 ms after the winner ACKs; secondClientWait is that retry time'},
@@ -91,18 +95,22 @@ const log = (...a) => console.log(...a);
 
 // ---------- preview ----------
 async function previewLoop(seconds, timestamps) {
-  const start = now(); const latencies = []; const gaps = []; const sizes = [];
-  let last = null; let lastAt = null; let unique = 0; let requests = 0;
+  const start = now(); const latencies = []; const gaps = []; const sizes = []; const ages = [];
+  let last = null; let lastAt = null; let unique = 0; let requests = 0; let firstId = null; let lastId = null;
   while (now() - start < seconds * 1000) {
     const r = await api('/frame.jpg');
     if (r.status !== 200) { await delay(30); continue; }
     const t = now(); requests++; latencies.push(r.total); sizes.push(r.bytes.length);
-    const h = md5(r.bytes);
+    const frameId = r.headers.get('x-frame-id');
+    const h = frameId ?? md5(r.bytes);
+    if (frameId !== null) { firstId ??= Number(frameId); lastId = Number(frameId); ages.push(Number(r.headers.get('x-frame-age-ms'))); }
     if (h !== last) { unique++; last = h; timestamps?.push(t); if (lastAt !== null) gaps.push(t - lastAt); lastAt = t; }
   }
   const elapsed = (now() - start) / 1000;
   return {seconds:round(elapsed), requests, requestsPerSec:round(requests / elapsed), uniqueFrames:unique, uniqueFps:round(unique / elapsed, 2),
-    duplicateShare:round(1 - unique / Math.max(1, requests), 2), requestMs:stats(latencies), uniqueFrameGapMs:stats(gaps), frameBytes:stats(sizes)};
+    duplicateShare:round(1 - unique / Math.max(1, requests), 2), requestMs:stats(latencies), uniqueFrameGapMs:stats(gaps), frameBytes:stats(sizes),
+    // Frames the phone encoded in the window (from X-Frame-Id), whether or not this client fetched each of them.
+    framesProducedPerSec:firstId === null ? null : round((lastId - firstId + 1) / elapsed, 2), frameAgeMsAtResponse:stats(ages)};
 }
 
 async function sectionPreview() {
@@ -171,7 +179,7 @@ async function sectionCapture() {
   await captureCycle(unique[0]); // back to the largest resolution, the default of the app
   // Preview while shooting
   const stamps = []; let stop = false;
-  const viewer = (async () => { const start = now(); while (!stop) { const r = await api('/frame.jpg'); if (r.status === 200) stamps.push({t:now(), h:md5(r.bytes)}) } return start })();
+  const viewer = (async () => { const start = now(); while (!stop) { const r = await api('/frame.jpg'); if (r.status === 200) stamps.push({t:now(), h:r.headers.get('x-frame-id') ?? md5(r.bytes)}) } return start })();
   await delay(1500);
   const windows = []; const during = [];
   for (let i = 0; i < 10; i++) { const w0 = now(); const c = await captureCycle(unique[0]); windows.push([w0, now()]); during.push(c); await delay(200); }
@@ -261,6 +269,12 @@ try {
     gitHead:execFileSync('git', ['rev-parse', '--short', 'HEAD'], {encoding:'utf8', cwd:new URL('..', import.meta.url).pathname}).trim(),
     gitDirty:execFileSync('git', ['status', '--porcelain'], {encoding:'utf8', cwd:new URL('..', import.meta.url).pathname}).trim().length > 0,
     resolutionsAdvertised:status.resolutions.length, largest:status.resolutions[0], deviceBefore:device()};
+  if (torchOn) { await api('/torch', {enabled:true}); await delay(2500); }
+  {
+    const sample = await rpc('take_photo'); const d = mcpData(sample);
+    report.lighting = {torch:torchOn ? 'on' : 'off', sample:sample.result.isError ? null : {meanBrightness:d.metrics.meanBrightness, contrast:d.metrics.contrast, sharpness:d.metrics.sharpness, captureMs:d.captureMs, bytes:d.bytes}};
+    if (!sample.result.isError) await rpc('release_capture', {handle:d.handle});
+  }
   if (sections.has('preview')) await sectionPreview();
   if (sections.has('capture')) await sectionCapture();
   if (sections.has('contention')) await sectionContention();
@@ -273,6 +287,7 @@ try {
   const pidBefore = report.environment.deviceBefore.pid; const pidAfter = report.environment.deviceAfter.pid;
   report.processSameAsAtStart = pidBefore && pidAfter ? pidBefore === pidAfter : null; // null: adb could not tell
 } finally {
+  if (torchOn) { try { await api('/torch', {enabled:false}) } catch {} }
   await mkdir(new URL('../artifacts/', import.meta.url), {recursive:true});
   await writeFile(new URL(`../artifacts/perf-${label}.json`, import.meta.url), JSON.stringify(report, null, 2));
 }

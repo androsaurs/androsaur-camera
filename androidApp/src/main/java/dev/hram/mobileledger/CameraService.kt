@@ -26,6 +26,8 @@ import androidx.lifecycle.LifecycleRegistry
 import dev.hram.mobileledger.protocol.CaptureLedger
 import dev.hram.mobileledger.calibration.CalibrationGeometry
 import dev.hram.mobileledger.calibration.CalibrationSessions
+import dev.hram.mobileledger.view.Nv21
+import dev.hram.mobileledger.view.RegionMath
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -50,11 +52,18 @@ class CameraService : Service(), LifecycleOwner {
     private var result: File? = null
     private var resultMeta = JSONObject()
     private var failure: String? = null
-    @Volatile private var latestFrame: ByteArray? = null
+    class Frame(val jpeg: ByteArray, val id: Long, val capturedAt: Long)
+    @Volatile private var latestFrame: Frame? = null
+    private val frameCounter = java.util.concurrent.atomic.AtomicLong()
+    /** Preview JPEGs are encoded only while somebody asks for them, but then for every frame the camera delivers. */
+    @Volatile private var previewDemandUntil = 0L
+    private val analysisDelivered = java.util.concurrent.atomic.AtomicLong()
+    private val previewEncoded = java.util.concurrent.atomic.AtomicLong()
+    private val previewEncodeNanos = java.util.concurrent.atomic.AtomicLong()
+    private fun publish(jpeg: ByteArray) = Frame(jpeg, frameCounter.incrementAndGet(), SystemClock.elapsedRealtime())
     @Volatile private var lastSeen = 0L
     @Volatile private var cameraState = "starting"
     @Volatile private var cameraError: String? = null
-    private var lastEncoded = 0L
     private val focusController by lazy { FocusController(main, ContextCompat.getMainExecutor(this)) }
     fun focusStatus(): JSONObject = focusController.json()
     @Volatile private var torch = false
@@ -139,7 +148,13 @@ class CameraService : Service(), LifecycleOwner {
         lastSeen = SystemClock.elapsedRealtime()
         main.post { if (!closing && camera == null && provider != null) bindCamera() }
     }
-    fun frame(): ByteArray? = latestFrame
+    /** The newest preview frame, or null while there is none or it is older than two seconds (nobody was watching). */
+    fun frameSnapshot(): Frame? {
+        val now = SystemClock.elapsedRealtime()
+        previewDemandUntil = now + 3000
+        return latestFrame?.takeIf { now - it.capturedAt <= 2000 }
+    }
+    fun frame(): ByteArray? = frameSnapshot()?.jpeg
 
     fun setCalibrationTolerancePercent(percent: Double): Boolean {
         if (!percent.isFinite() || percent !in 0.1..5.0) return false
@@ -235,6 +250,8 @@ class CameraService : Service(), LifecycleOwner {
                 .put("pendingRequest", ledger.current?.id ?: JSONObject.NULL)
                 .put("calibrationTolerancePercent", calibrationTolerance * 100)
                 .put("focus", focusStatus())
+                .put("preview", JSONObject().put("framesDelivered", analysisDelivered.get()).put("framesEncoded", previewEncoded.get())
+                    .put("encodeMsAvg", previewEncoded.get().let { if (it == 0L) 0.0 else Math.round(previewEncodeNanos.get() / it / 1e4) / 100.0 }))
                 .put("capabilities", JSONArray().put("calibration-v1").put("focus-v1"))
                 .put("protocol", "prototype-http-v1").put("session", server.session)
         }
@@ -268,7 +285,7 @@ class CameraService : Service(), LifecycleOwner {
                     main.post {
                         if (calibrationMode && analysisGeneration == calibrationGeneration && !closing) {
                             calibrationFrame = frame
-                            latestFrame = frame.jpeg
+                            latestFrame = frame.jpeg?.let(::publish)
                             calibrationCallback?.invoke(frame)
                         }
                     }
@@ -302,11 +319,13 @@ class CameraService : Service(), LifecycleOwner {
             focusController.configure(analysisBuilder)
             val analysis = analysisBuilder.build()
             analysis.setAnalyzer(executor) { image ->
+                analysisDelivered.incrementAndGet()
                 try {
-                    val now = SystemClock.elapsedRealtime()
-                    if (now - lastEncoded >= 350) {
-                        lastEncoded = now
-                        latestFrame = previewJpeg(image)
+                    if (SystemClock.elapsedRealtime() < previewDemandUntil) {
+                        val started = SystemClock.elapsedRealtimeNanos()
+                        latestFrame = publish(previewJpeg(image))
+                        previewEncodeNanos.addAndGet(SystemClock.elapsedRealtimeNanos() - started)
+                        previewEncoded.incrementAndGet()
                     }
                 } catch (e: Exception) { Log.w("MobileLedger", "Preview encoding failed", e) }
                 finally { image.close() }
@@ -475,12 +494,21 @@ class CameraService : Service(), LifecycleOwner {
                 nv21[offset++] = uRow[x * u.pixelStride]
             }
         }
+        val rotation = image.imageInfo.rotationDegrees
+        val scale = minOf(1f, maxEdge.toFloat() / maxOf(width, height))
+        if (scale == 1f && Nv21.canRotate(width, height, rotation)) {
+            // Full-size preview: turn the raw frame upright first, so the JPEG is compressed exactly once.
+            val (w, h) = RegionMath.orientedSize(width, height, rotation)
+            val upright = Nv21.rotate(nv21, width, height, rotation)
+            return ByteArrayOutputStream().use {
+                YuvImage(upright, ImageFormat.NV21, w, h, null).compressToJpeg(Rect(0, 0, w, h), 65, it)
+                it.toByteArray()
+            }
+        }
         val jpeg = ByteArrayOutputStream().use {
             YuvImage(nv21, ImageFormat.NV21, width, height, null).compressToJpeg(Rect(0, 0, width, height), 65, it)
             it.toByteArray()
         }
-        val rotation = image.imageInfo.rotationDegrees
-        val scale = minOf(1f, maxEdge.toFloat() / maxOf(width, height))
         if (rotation == 0 && scale == 1f) return jpeg
         val bitmap = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)
         val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, Matrix().apply {

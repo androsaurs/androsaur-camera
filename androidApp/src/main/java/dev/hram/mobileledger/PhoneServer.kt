@@ -99,9 +99,10 @@ class PhoneServer(private val camera: CameraService, private val token: String) 
                 "GET /status" -> { if (query["passive"] != "1") camera.touch(); json(socket, 200, camera.status()) }
                 "GET /frame.jpg" -> {
                     camera.touch()
-                    val frame = camera.frame()
+                    val frame = camera.frameSnapshot()
                     if (frame == null) json(socket, 202, JSONObject().put("state", "warming_up"))
-                    else respond(socket, 200, frame, "image/jpeg")
+                    else respond(socket, 200, frame.jpeg, "image/jpeg", mapOf("X-Frame-Id" to frame.id.toString(),
+                        "X-Frame-Age-Ms" to (android.os.SystemClock.elapsedRealtime() - frame.capturedAt).toString()))
                 }
                 "POST /mcp" -> {
                     // Browsers always send Origin; MCP clients do not. Refusing it blocks DNS-rebinding and cross-site calls.
