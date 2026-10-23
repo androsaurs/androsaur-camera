@@ -85,7 +85,7 @@ const report = {date:new Date().toISOString(), label, sections:[...sections], me
   readyGranularityMs:20,
   captureByResolution:{shotsPerResolution:10, firstAfterSwitch:'one extra shot right after changing resolution, reported separately', sizes:'advertised 4:3 sizes nearest to widths 4080, 3264, 2592, 1920, 1280', shotsPerMinute:'shots / wall time of the 10 back-to-back cycles'},
   previewWhileShooting:{shots:10, pauseBetweenShotsMs:200, leadInMs:1500, insideShots:'unique preview frames whose arrival lies between POST /capture and the end of the cycle, divided by the summed duration of those windows'},
-  lighting:'recorded in report.lighting: torch state and the metrics of one sample shot taken after the torch has had 2.5 s to settle. Frame rate depends on light: in a dim scene auto-exposure uses long exposures and the camera cannot deliver more than about 1000 / exposure ms frames per second',
+  lighting:'recorded in report.lighting: torch state, the front light sensor of the phone (lux, telemetry only) and the metrics of one sample shot taken after the torch has had 2.5 s to settle. Frame rate depends on light: in a dim scene auto-exposure uses long exposures and the camera cannot deliver more than about 1000 / exposure ms frames per second',
   statusProbes:40,
   sustained:{shots:60, blocks:'p50 of totalMs over shots 1-20, 21-40, 41-60 to expose slow-down by heat'},
   contention:{rounds:10, how:'two clients POST /capture at the same moment; the loser retries every 50 ms after the winner ACKs; secondClientWait is that retry time'},
@@ -272,7 +272,8 @@ try {
   if (torchOn) { await api('/torch', {enabled:true}); await delay(2500); }
   {
     const sample = await rpc('take_photo'); const d = mcpData(sample);
-    report.lighting = {torch:torchOn ? 'on' : 'off', sample:sample.result.isError ? null : {meanBrightness:d.metrics.meanBrightness, contrast:d.metrics.contrast, sharpness:d.metrics.sharpness, captureMs:d.captureMs, bytes:d.bytes}};
+    const lightSensor = json(await api('/status?passive=1')).sensors?.light ?? null; // phone's front sensor, telemetry only
+    report.lighting = {torch:torchOn ? 'on' : 'off', lightSensor, sample:sample.result.isError ? null : {meanBrightness:d.metrics.meanBrightness, contrast:d.metrics.contrast, sharpness:d.metrics.sharpness, captureMs:d.captureMs, bytes:d.bytes}};
     if (!sample.result.isError) await rpc('release_capture', {handle:d.handle});
   }
   if (sections.has('preview')) await sectionPreview();

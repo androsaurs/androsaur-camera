@@ -4,6 +4,10 @@ import android.app.*
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.ImageFormat
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
@@ -52,6 +56,32 @@ class CameraService : Service(), LifecycleOwner {
     private var result: File? = null
     private var resultMeta = JSONObject()
     private var failure: String? = null
+    /** Ambient light is telemetry only: it is reported, never used to change camera settings. */
+    @Volatile private var lightLux: Float? = null
+    @Volatile private var lightChangedAt = 0L
+    private var lightSensor: Sensor? = null
+    @Volatile private var lightRegistered = false
+    private val lightListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) { lightLux = event.values[0]; lightChangedAt = SystemClock.elapsedRealtime() }
+        override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
+    }
+    private var lightRetryTick = 0
+    /** The system may refuse the registration (seen on a Redmi 12); retry about every 30 s until it is accepted. */
+    private fun registerLightSensor() {
+        val sensor = lightSensor ?: return
+        if (lightRegistered) return
+        val attempt = lightRetryTick++
+        if (attempt > 0 && attempt % 10 != 0) return
+        lightRegistered = getSystemService(SensorManager::class.java)?.registerListener(lightListener, sensor, SensorManager.SENSOR_DELAY_NORMAL, main) ?: false
+    }
+    private fun lightJson(): JSONObject {
+        val sensor = lightSensor
+        val json = JSONObject().put("available", sensor != null)
+        if (sensor != null) json.put("name", sensor.name).put("maxRangeLux", sensor.maximumRange.toDouble())
+            .put("registered", lightRegistered).put("reportingMode", sensor.reportingMode)
+        lightLux?.let { json.put("lux", Math.round(it * 10) / 10.0).put("sinceChangeMs", SystemClock.elapsedRealtime() - lightChangedAt) }
+        return json
+    }
     class Frame(val jpeg: ByteArray, val id: Long, val capturedAt: Long)
     @Volatile private var latestFrame: Frame? = null
     private val frameCounter = java.util.concurrent.atomic.AtomicLong()
@@ -88,6 +118,7 @@ class CameraService : Service(), LifecycleOwner {
             val changed = synchronized(gate) { updateCalibrationModeLocked() }
             if (changed) reconfigureCalibration()
             agentStore.sweep()
+            registerLightSensor()
             val idle = synchronized(gate) { !ledger.capturing }
             if (idle && !calibrationMode && SystemClock.elapsedRealtime() - lastSeen > 15_000 && camera != null) {
                 focusController.detach(); provider?.unbindAll(); camera = null; capture = null; latestFrame = null
@@ -112,6 +143,10 @@ class CameraService : Service(), LifecycleOwner {
         lifecycleRegistry.currentState = Lifecycle.State.STARTED
         photoDir.listFiles()?.forEach { it.delete() }
         agentStore
+        getSystemService(SensorManager::class.java)?.let { manager ->
+            lightSensor = manager.getDefaultSensor(Sensor.TYPE_LIGHT)
+        }
+        registerLightSensor()
         server =PhoneServer(this, MainActivity.token(this))
         server.start()
         val future = ProcessCameraProvider.getInstance(this)
@@ -140,6 +175,7 @@ class CameraService : Service(), LifecycleOwner {
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         executor.shutdownNow()
         synchronized(gate) { result?.delete() }
+        getSystemService(SensorManager::class.java)?.unregisterListener(lightListener)
         agentStore.clear()
         super.onDestroy()
     }
@@ -252,6 +288,7 @@ class CameraService : Service(), LifecycleOwner {
                 .put("focus", focusStatus())
                 .put("preview", JSONObject().put("framesDelivered", analysisDelivered.get()).put("framesEncoded", previewEncoded.get())
                     .put("encodeMsAvg", previewEncoded.get().let { if (it == 0L) 0.0 else Math.round(previewEncodeNanos.get() / it / 1e4) / 100.0 }))
+                .put("sensors", JSONObject().put("light", lightJson()))
                 .put("capabilities", JSONArray().put("calibration-v1").put("focus-v1"))
                 .put("protocol", "prototype-http-v1").put("session", server.session)
         }

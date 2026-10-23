@@ -69,6 +69,8 @@ try {
     const s = await waitReady();
     assert.ok(s.resolutions.length);
     assert.equal(s.captureStore.count, 0);
+    assert.equal(typeof s.sensors.light.available, 'boolean');
+    if (s.sensors.light.available && s.sensors.light.lux !== undefined) assert.ok(s.sensors.light.lux >= 0 && s.sensors.light.sinceChangeMs >= 0);
     assert.match(s.captureStore.bootId, /^[0-9a-f]{4}$/);
     report.bootId = s.captureStore.bootId;
   });

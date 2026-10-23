@@ -44,7 +44,7 @@ class McpEndpoint(private val camera: CameraService) {
     }
 
     private fun tools() = JSONArray()
-        .put(tool("status", "Camera state, supported resolutions, torch, focus, pending request and capture-store usage (bootId changes when the app restarts). Does not wake the camera.",
+        .put(tool("status", "Camera state, supported resolutions, torch, focus, pending request, capture-store usage (bootId changes when the app restarts) and sensors.light: ambient light in lux from the phone's front light sensor (telemetry only; it measures light at the screen side, not what the camera sees, and may be stale while the phone sleeps: see sinceChangeMs). Does not wake the camera.",
             schema(), readOnly = true))
         .put(tool("preview", "Live low-resolution frame (about 640x480) as an image. Enough to check where the sheet lies; too coarse to read text or judge sharpness. Costs tokens for one small image.",
             schema(), readOnly = true))
