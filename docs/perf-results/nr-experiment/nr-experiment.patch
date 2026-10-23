@@ -1,0 +1,85 @@
+diff --git a/androidApp/src/main/java/dev/hram/mobileledger/CameraService.kt b/androidApp/src/main/java/dev/hram/mobileledger/CameraService.kt
+index 4891f71..f00573c 100644
+--- a/androidApp/src/main/java/dev/hram/mobileledger/CameraService.kt
++++ b/androidApp/src/main/java/dev/hram/mobileledger/CameraService.kt
+@@ -57,6 +57,30 @@ class CameraService : Service(), LifecycleOwner {
+     private val frameCounter = java.util.concurrent.atomic.AtomicLong()
+     /** Preview JPEGs are encoded only while somebody asks for them, but then for every frame the camera delivers. */
+     @Volatile private var previewDemandUntil = 0L
++    // TEMPORARY EXPERIMENT (not for commit): capture-path switches to find where dark-room shots spend time.
++    @Volatile private var debugMemory = false
++    @androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
++    fun setDebugCapture(nr: String?, memory: Boolean): JSONObject {
++        debugMemory = memory
++        val mode = when (nr) { "off" -> 0; "fast" -> 1; "hq" -> 2; "minimal" -> 3; "zsl" -> 4; else -> null }
++        val active = camera
++        val available = try {
++            active?.let { androidx.camera.camera2.interop.Camera2CameraInfo.from(it.cameraInfo)
++                .getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES)?.toList() }
++        } catch (e: Exception) { null }
++        main.post {
++            // Rebinding restores the pristine option set (focus options included); the NR mode is then added on top.
++            if (provider != null && !closing) bindCamera()
++            // Added only after the focus restore started by the rebind has been confirmed; an earlier add cancels it.
++            main.postDelayed({
++                val control = camera?.let { androidx.camera.camera2.interop.Camera2CameraControl.from(it.cameraControl) } ?: return@postDelayed
++                if (mode != null) control.addCaptureRequestOptions(androidx.camera.camera2.interop.CaptureRequestOptions.Builder()
++                    .setCaptureRequestOption(android.hardware.camera2.CaptureRequest.NOISE_REDUCTION_MODE, mode).build())
++            }, 1200)
++        }
++        return JSONObject().put("nr", nr ?: JSONObject.NULL).put("memory", memory).put("boundCamera", active != null)
++            .put("availableNrModes", available?.let { org.json.JSONArray(it) } ?: JSONObject.NULL)
++    }
+     private val analysisDelivered = java.util.concurrent.atomic.AtomicLong()
+     private val previewEncoded = java.util.concurrent.atomic.AtomicLong()
+     private val previewEncodeNanos = java.util.concurrent.atomic.AtomicLong()
+@@ -402,6 +426,28 @@ class CameraService : Service(), LifecycleOwner {
+                 if (ledger.current != request) { ledger.exposureEnded(); return }
+             }
+             val file = File(photoDir, "${request.id}.jpg")
++            if (debugMemory) {
++                photo.takePicture(ContextCompat.getMainExecutor(this), object : ImageCapture.OnImageCapturedCallback() {
++                    override fun onCaptureSuccess(image: ImageProxy) {
++                        val capturedMs = SystemClock.elapsedRealtime() - started
++                        val buffer = image.planes[0].buffer
++                        val bytes = ByteArray(buffer.remaining()).also { buffer.get(it) }
++                        val w = image.width; val h = image.height
++                        image.close()
++                        val writeStart = SystemClock.elapsedRealtime()
++                        file.writeBytes(bytes)
++                        val writeMs = SystemClock.elapsedRealtime() - writeStart
++                        synchronized(gate) {
++                            ledger.exposureEnded()
++                            if (closing || !ledger.captured(request)) { file.delete(); return }
++                            result = file
++                            resultMeta = JSONObject().put("focus", focus).put("captureMs", capturedMs).put("writeMs", writeMs).put("width", w).put("height", h)
++                        }
++                    }
++                    override fun onError(exception: ImageCaptureException) { file.delete(); fail(request, exception.message ?: "capture_failed") }
++                })
++                return
++            }
+             photo.takePicture(ImageCapture.OutputFileOptions.Builder(file).build(), ContextCompat.getMainExecutor(this),
+                 object : ImageCapture.OnImageSavedCallback {
+                     override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+diff --git a/androidApp/src/main/java/dev/hram/mobileledger/PhoneServer.kt b/androidApp/src/main/java/dev/hram/mobileledger/PhoneServer.kt
+index b99c2cd..67556ad 100644
+--- a/androidApp/src/main/java/dev/hram/mobileledger/PhoneServer.kt
++++ b/androidApp/src/main/java/dev/hram/mobileledger/PhoneServer.kt
+@@ -111,6 +111,7 @@ class PhoneServer(private val camera: CameraService, private val token: String)
+                     if (reply == null) respond(socket, 202, ByteArray(0), "application/json") else json(socket, 200, reply)
+                 }
+                 "GET /mcp", "DELETE /mcp" -> respond(socket, 405, ByteArray(0), "application/json", mapOf("Allow" to "POST"))
++                "POST /debug/capture-mode" -> json(socket, 200, camera.setDebugCapture(body.optString("nr").ifEmpty { null }, body.optBoolean("memory", false)))
+                 "POST /torch" -> {
+                     val ok = camera.setTorch(body.getBoolean("enabled"))
+                     json(socket, if (ok) 200 else 400, if (ok) JSONObject().put("ok", true) else JSONObject().put("error", "torch_unavailable"))
+@@ -156,7 +157,7 @@ class PhoneServer(private val camera: CameraService, private val token: String)
+                         "X-Focus-Status" to result.meta.optString("focus"),
+                         "X-Capture-Ms" to result.meta.optString("captureMs"),
+                         "X-Image-Width" to result.meta.optString("width"),
+-                        "X-Image-Height" to result.meta.optString("height")))
++                        "X-Image-Height" to result.meta.optString("height"), "X-Write-Ms" to result.meta.optString("writeMs")))
+                 }
+                 "POST /ack", "POST /cancel" -> {
+                     val ok = camera.finish(identifier(body.getString("requestId")), identifier(body.getString("clientId")))
