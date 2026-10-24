@@ -103,7 +103,7 @@ class CameraService : Service(), LifecycleOwner {
     private var closing = false
     private val cameraPreferences by lazy { getSharedPreferences("camera", MODE_PRIVATE) }
     /** The camera in use. Saved, so the choice survives restarts; it applies to every client of the service. */
-    @Volatile var lens = Lens.BACK; private set
+    @Volatile var lens = Lens.DEFAULT; private set
     @Volatile private var availableLenses: List<Lens> = emptyList()
     private val binder = LocalBinder()
     /** Face-detector experiments; see [FaceLab]. Front camera only, off by default, and it keeps the camera awake while on. */
@@ -173,6 +173,8 @@ class CameraService : Service(), LifecycleOwner {
                 try {
                     provider = future.get(); cameraState = "idle"
                     availableLenses = Lens.entries.filter { provider?.hasCamera(selectorFor(it)) == true }
+                    // A phone without the default camera uses the one it has.
+                    if (lens !in availableLenses && availableLenses.isNotEmpty()) lens = availableLenses.first()
                     if (calibrationMode) bindCamera()
                 }
                 catch (e: Exception) { cameraState = "needs_user"; cameraError = e.message }

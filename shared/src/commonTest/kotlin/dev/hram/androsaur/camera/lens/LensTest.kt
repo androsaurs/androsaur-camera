@@ -7,6 +7,8 @@ import kotlin.test.assertNull
 class LensTest {
     @Test fun parsesKnownIds() { assertEquals(Lens.BACK, Lens.parse("back")); assertEquals(Lens.FRONT, Lens.parse("front")) }
 
+    @Test fun theFrontCameraIsTheDefault() = assertEquals(Lens.FRONT, Lens.DEFAULT)
+
     @Test fun rejectsEverythingElse() {
         listOf(null, "", "FRONT", "selfie", " front", "rear").forEach { assertNull(Lens.parse(it), it.toString()) }
     }
