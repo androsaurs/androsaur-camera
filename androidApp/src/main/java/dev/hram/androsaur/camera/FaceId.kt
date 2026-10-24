@@ -58,6 +58,8 @@ class FaceId(private val context: Context, val store: PeopleStore) {
     private var error: String? = null
 
     @Volatile var mode = Mode.IDLE; private set
+    /** When set, the test mode started by [identify] ends at this time (elapsed realtime) and the recognizer goes quiet again. */
+    @Volatile private var identifyUntil = 0L
     private val tracks = ArrayList<Track>()
     private var nextId = 1
     private var faceAt = 0L
@@ -76,7 +78,20 @@ class FaceId(private val context: Context, val store: PeopleStore) {
         get() = prefs.getFloat("threshold", 0.40f).toDouble()
         set(value) { prefs.edit().putFloat("threshold", value.coerceIn(0.1, 0.9).toFloat()).apply() }
 
+    /**
+     * Recognizes the faces in view for the next [ms] milliseconds and then goes back to doing nothing: the main app asks for this when
+     * the wake word was heard, to learn who said it. Does not touch a screen's own teaching or testing.
+     */
+    fun identify(ms: Long): Boolean = synchronized(lock) {
+        if (mode == Mode.ENROLL || (mode == Mode.TEST && identifyUntil == 0L)) return false
+        tracks.clear(); hint = ""
+        mode = Mode.TEST
+        identifyUntil = SystemClock.elapsedRealtime() + ms
+        true
+    }
+
     fun setMode(next: Mode) = synchronized(lock) {
+        identifyUntil = 0L
         mode = next
         if (next != Mode.ENROLL) { vectors.clear(); poses.clear(); enrollName = "" }
         tracks.clear(); hint = ""
@@ -110,6 +125,7 @@ class FaceId(private val context: Context, val store: PeopleStore) {
         val s = snapshot()
         val people = JSONArray(store.names().map { JSONObject().put("name", it).put("samples", store.samples(it)) })
         val json = JSONObject().put("mode", s.mode.name.lowercase()).put("state", s.state).put("threshold", s.threshold)
+            .put("identifyingMs", identifyUntil.let { if (it == 0L) 0L else maxOf(0L, it - SystemClock.elapsedRealtime()) })
             .put("model", JSONObject().put("name", "SFace int8").put("dimensions", 128)).put("people", people)
             .put("landmarkerMs", s.landmarkerMs?.let { Math.round(it * 10) / 10.0 } ?: JSONObject.NULL)
             .put("embedMs", s.embedMs?.let { Math.round(it * 10) / 10.0 } ?: JSONObject.NULL).put("fps", Math.round(s.fps * 10) / 10.0)
@@ -136,6 +152,11 @@ class FaceId(private val context: Context, val store: PeopleStore) {
     /** One analysis frame. The caller owns [image] and closes it. */
     fun analyze(image: ImageProxy) {
         if (mode == Mode.IDLE) return
+        if (identifyUntil != 0L && SystemClock.elapsedRealtime() > identifyUntil) {
+            // The window asked for by identify() is over: stay quiet until the next request. What was recognized stays readable.
+            synchronized(lock) { if (identifyUntil != 0L) { identifyUntil = 0L; mode = Mode.IDLE } }
+            return
+        }
         var raw: Bitmap? = null; var upright: Bitmap? = null
         try {
             ensureLoaded()
@@ -177,8 +198,16 @@ class FaceId(private val context: Context, val store: PeopleStore) {
 
     private fun smooth(old: Double?, value: Double) = if (old == null) value else old * 0.8 + value * 0.2
 
-    private fun ensureLoaded() {
+    private val loadLock = Any()
+
+    /** Loads the models ahead of the first use, off the caller's thread, so the first recognition does not wait for them. */
+    fun preload() {
         if (landmarker != null && embedder != null) return
+        Thread({ try { ensureLoaded() } catch (e: Exception) { Log.w(TAG, "Preloading the recognizer failed", e) } }, "face-id-preload").start()
+    }
+
+    private fun ensureLoaded() = synchronized(loadLock) {
+        if (landmarker != null && embedder != null) return@synchronized
         synchronized(lock) { state = "loading"; error = null }
         embedder = embedder ?: FaceEmbedder(context)
         landmarker = landmarker ?: FaceLandmarker.createFromOptions(context, FaceLandmarker.FaceLandmarkerOptions.builder()

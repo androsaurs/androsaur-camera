@@ -96,6 +96,8 @@ class McpEndpoint(private val camera: CameraService) {
                 "detectors" to JSONObject().put("type", "array").put("items", JSONObject().put("type", "string")).put("description", "Software detectors to run: [] (hardware only), [mlkit], [mediapipe], [mlkit, mediapipe] or [landmarker]; picks mode A, B, C or D accordingly."))), idempotent = true))
         .put(tool("people", "Who the camera knows and what it sees now: the people taught on the phone's People screen (names and how many samples each), the recognizer state, the match threshold (cosine similarity, higher is stricter), timing, the faces seen now (faces: id, frame, tilt, head pose and for each who it was recognized as: name or null, the best match and the similarity to every person; face and who repeat the biggest one). Recognition runs only while the People screen is in test mode; it follows up to 3 faces at once, with the front camera. Faces are taught on the phone, not through this API; only vectors of numbers are stored, never pictures.",
             schema(), readOnly = true))
+        .put(tool("identify", "Recognize the faces in view for ms milliseconds (500-10000, default 3500) and then stop, to learn who is there right now (for example who has just said the wake word). Needs the front camera with face tracking on (face_lab enabled). Read the result with people: who is the biggest face, faces lists everyone. Errors: front_camera_required, tracking_off, lab_screen_open, recognizer_busy.",
+            schema(props = mapOf("ms" to prop("integer", "How long to recognize, 500-10000. Default 3500."))), idempotent = true))
         .put(tool("rename_person", "Give a taught person another name (to fix a typo). Their face vectors stay. Errors: unknown_person, invalid_name (letters, digits, space, dash, up to 40), name_taken.",
             schema(listOf("name", "to"), mapOf("name" to prop("string", "The current name."), "to" to prop("string", "The new name."))), idempotent = true))
         .put(tool("forget_person", "Delete a taught person (their face vectors) from the phone.",
@@ -150,6 +152,10 @@ class McpEndpoint(private val camera: CameraService) {
                 toolResult(value, error = code !in 200..299)
             }
             "people" -> toolResult(camera.faceId.json())
+            "identify" -> {
+                val (code, value) = camera.identify(args.optLong("ms", 3500))
+                toolResult(value, error = code != 200)
+            }
             "rename_person" -> {
                 val problem = camera.faceId.store.rename(args.getString("name"), args.getString("to").trim())
                 toolResult(if (problem == null) JSONObject().put("ok", true) else JSONObject().put("error", problem), error = problem != null)

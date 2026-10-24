@@ -246,6 +246,7 @@ class CameraService : Service(), LifecycleOwner {
         if (enabled != null && enabled != faceLabOn) {
             if (enabled) { faceLab.reset(); lastSeen = SystemClock.elapsedRealtime() }
             faceLabOn = enabled; faceLab.setRunning(enabled)
+            if (enabled) faceId.preload()
             main.post { if (!closing && provider != null) { if (enabled || camera != null) bindCamera() } }
         }
         return 200 to faceLab.json().put("enabled", faceLabOn).put("screen", faceView != null).put("lens", lens.id)
@@ -266,6 +267,16 @@ class CameraService : Service(), LifecycleOwner {
         }
         main.post { if (!closing && provider != null) { cameraState = "starting"; bindCamera() } }
         return 200 to JSONObject().put("lens", "front")
+    }
+
+    /** Recognizes the faces in view for [ms] and then stops; needs the front camera with face tracking on. */
+    fun identify(ms: Long): Pair<Int, JSONObject> {
+        if (lens != Lens.FRONT) return 409 to JSONObject().put("error", "front_camera_required")
+        if (!faceLabOn && !peopleOn) return 409 to JSONObject().put("error", "tracking_off")
+        if (faceView != null) return 409 to JSONObject().put("error", "lab_screen_open")
+        val window = ms.coerceIn(500, 10_000)
+        if (!faceId.identify(window)) return 409 to JSONObject().put("error", "recognizer_busy")
+        return 200 to JSONObject().put("ok", true).put("ms", window)
     }
 
     /** The people screen opens: the front camera for now (the saved choice stays), its preview in [view], and teaching or testing can begin. */
@@ -485,7 +496,8 @@ class CameraService : Service(), LifecycleOwner {
             val documentFocus = lens == Lens.BACK
             if (documentFocus) focusController.configure(analysisBuilder)
             val lab = faceLabOn && lens == Lens.FRONT
-            val ids = peopleOn && lens == Lens.FRONT
+            // With the lab on the recognizer rides on the same frames but stays idle until identify() asks it to recognize.
+            val ids = (peopleOn || faceLabOn) && lens == Lens.FRONT
             if (lab) {
                 // The camera chip's own face detection: rectangles come back with the capture results, no CPU work.
                 androidx.camera.camera2.interop.Camera2Interop.Extender(analysisBuilder)
