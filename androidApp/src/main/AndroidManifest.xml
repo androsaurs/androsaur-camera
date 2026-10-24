@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Other Androsaur apps signed with the same key may start the service and ask for the access code. -->
+    <permission android:name="dev.hram.androsaur.camera.permission.CONTROL" android:protectionLevel="signature" />
+
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -13,6 +16,9 @@
         <activity android:name=".CalibrationActivity" android:exported="false" />
         <activity android:name=".FaceLabActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".PeopleActivity" android:exported="false" android:screenOrientation="portrait" />
-        <service android:name=".CameraService" android:exported="false" android:foregroundServiceType="camera" />
+        <service android:name=".CameraService" android:exported="true"
+            android:permission="dev.hram.androsaur.camera.permission.CONTROL" android:foregroundServiceType="camera" />
+        <provider android:name=".LinkProvider" android:authorities="dev.hram.androsaur.camera.link" android:exported="true"
+            android:permission="dev.hram.androsaur.camera.permission.CONTROL" />
     </application>
 </manifest>
