@@ -280,7 +280,7 @@ private fun EnrollPanel(snap: FaceId.Snapshot?, save: () -> Unit, cancel: () -> 
 @Composable
 private fun TestPanel(snap: FaceId.Snapshot?, service: CameraService?, done: () -> Unit) {
     val faces = if (snap != null && snap.faceAgeMs in 0..1500) snap.faces.sortedBy { it.face.x } else emptyList()
-    var threshold by remember { mutableStateOf(service?.faceId?.threshold?.toFloat() ?: 0.4f) }
+    var threshold by remember { mutableStateOf(service?.faceId?.threshold?.toFloat() ?: 0.55f) }
     Text(when {
         snap?.state == "loading" -> "Загружаю модели…"
         faces.isEmpty() -> "Лицо не найдено"

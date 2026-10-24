@@ -75,7 +75,7 @@ class FaceId(private val context: Context, val store: PeopleStore) {
     private var size = 0 to 0
 
     var threshold: Double
-        get() = prefs.getFloat("threshold", 0.40f).toDouble()
+        get() = prefs.getFloat("threshold", 0.55f).toDouble()
         set(value) { prefs.edit().putFloat("threshold", value.coerceIn(0.1, 0.9).toFloat()).apply() }
 
     /**
