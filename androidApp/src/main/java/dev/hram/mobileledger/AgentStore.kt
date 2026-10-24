@@ -61,6 +61,14 @@ class AgentStore(private val dir: File) {
         }
     }
 
+    /** Attaches metrics computed on request to a live photo; null if the photo is gone. */
+    fun setMetrics(handle: String, metrics: JSONObject): CaptureStoreLedger.Entry? {
+        synchronized(this) {
+            val current = (ledger.lookup(handle, now(), touch = false) as? CaptureStoreLedger.Lookup.Found)?.entry ?: return null
+            return ledger.updateMetadata(handle, JSONObject(current.metadata).put("metrics", metrics).toString())
+        }
+    }
+
     /** The token is unguessable and is the only credential of a download link; never log it. */
     fun createLink(handle: String, ttlSeconds: Long, oneTime: Boolean): String? = synchronized(this) {
         val token = hex(16)

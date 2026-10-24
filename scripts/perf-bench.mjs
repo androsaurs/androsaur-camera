@@ -242,6 +242,7 @@ async function sectionMcp() {
   const handles = [];
   const run = async (n, fn) => { const out = []; for (let i = 0; i < n; i++) out.push(await fn(i)); return out; };
   const shots = await run(15, async () => { const r = await rpc('take_photo'); const d = mcpData(r); if (!r.result.isError) handles.push(d.handle); return {ms:r.ms, captureMs:d.captureMs, bytes:d.bytes, error:r.result.isError}; });
+  const withMetrics = await run(5, async () => { const r = await rpc('take_photo', {include_metrics:true}); const d = mcpData(r); if (!r.result.isError) handles.push(d.handle); return {ms:r.ms}; });
   const withPreview = await run(5, async () => { const r = await rpc('take_photo', {include_preview:true}); const d = mcpData(r); if (!r.result.isError) handles.push(d.handle); return {ms:r.ms, responseKb:round(JSON.stringify(r.result).length / 1024)}; });
   const target = handles.at(-1);
   const views = await run(5, async () => { const r = await rpc('view_capture', {handle:target}); return {ms:r.ms, kb:round(JSON.stringify(r.result).length / 1024)}; });
@@ -255,7 +256,7 @@ async function sectionMcp() {
   });
   for (const handle of handles) await rpc('release_capture', {handle});
   report.mcp = {takePhotoMs:stats(shots.filter(s => !s.error).map(s => s.ms)), takePhotoCaptureMs:stats(shots.map(s => s.captureMs)), takePhotoFailed:shots.filter(s => s.error).length,
-    takePhotoWithPreviewMs:stats(withPreview.map(s => s.ms)), previewResponseKb:stats(withPreview.map(s => s.responseKb)),
+    takePhotoWithMetricsMs:stats(withMetrics.map(s => s.ms)), takePhotoWithPreviewMs:stats(withPreview.map(s => s.ms)), previewResponseKb:stats(withPreview.map(s => s.responseKb)),
     viewCaptureMs:stats(views.map(v => v.ms)), viewCaptureKb:stats(views.map(v => v.kb)), viewRegionMs:stats(regions.map(v => v.ms)), viewRegionKb:stats(regions.map(v => v.kb)),
     getCaptureInfoMs:stats(info), linkDownloadMs:stats(links.map(l => l.downloadMs)), linkDownloadMBps:stats(links.map(l => l.mbps)), linkDownloadMb:links[0]?.mb};
   log('mcp take_photo p50', report.mcp.takePhotoMs.p50, 'ms; link download p50', report.mcp.linkDownloadMs.p50, 'ms');
@@ -271,7 +272,7 @@ try {
     resolutionsAdvertised:status.resolutions.length, largest:status.resolutions[0], deviceBefore:device()};
   if (torchOn) { await api('/torch', {enabled:true}); await delay(2500); }
   {
-    const sample = await rpc('take_photo'); const d = mcpData(sample);
+    const sample = await rpc('take_photo', {include_metrics:true}); const d = mcpData(sample);
     const lightSensor = json(await api('/status?passive=1')).sensors?.light ?? null; // phone's front sensor, telemetry only
     report.lighting = {torch:torchOn ? 'on' : 'off', lightSensor, sample:sample.result.isError ? null : {meanBrightness:d.metrics.meanBrightness, contrast:d.metrics.contrast, sharpness:d.metrics.sharpness, captureMs:d.captureMs, bytes:d.bytes}};
     if (!sample.result.isError) await rpc('release_capture', {handle:d.handle});

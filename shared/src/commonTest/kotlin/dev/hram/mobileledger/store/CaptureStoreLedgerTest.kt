@@ -46,6 +46,16 @@ class CaptureStoreLedgerTest {
         assertTrue(ledger.makeRoom(0, now = 3).isEmpty())
     }
 
+    @Test fun metadataCanBeUpdatedLaterWithoutTouchingTheRest() {
+        val ledger = ledger()
+        ledger.add(entry("ab12-a", bytes = 777, at = 5, request = "r"))
+        val updated = ledger.updateMetadata("ab12-a", "{\"metrics\":1}")!!
+        assertEquals("{\"metrics\":1}", updated.metadata)
+        assertEquals(777L to 5L, updated.bytes to updated.lastAccess)
+        assertEquals("ab12-a", ledger.byRequest("r")?.handle)
+        assertNull(ledger.updateMetadata("ab12-none", "{}"))
+    }
+
     @Test fun expiryIsMeasuredFromLastAccess() {
         val ledger = ledger()
         ledger.add(entry("ab12-a", at = 0))

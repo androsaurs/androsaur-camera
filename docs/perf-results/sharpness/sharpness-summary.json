@@ -1,0 +1,119 @@
+[
+ {
+  "metric": "app_global",
+  "rho_truth": 0.9266556228581544,
+  "rho_defocus": 0.7530290212349776,
+  "light_ratio": 1.6972229717133056,
+  "range_03": 1.0779187306990001,
+  "range_06": 1.3006143736572817,
+  "cv_repeat_percent": 0.0746167380614171
+ },
+ {
+  "metric": "app_center",
+  "rho_truth": 0.8145145993247259,
+  "rho_defocus": 0.6233866622677837,
+  "light_ratio": 1.9732590124406348,
+  "range_03": 1.0874392860507114,
+  "range_06": 1.2210144253253623,
+  "cv_repeat_percent": 0.12676391570482187
+ },
+ {
+  "metric": "app_tile_max",
+  "rho_truth": 0.8930436651955639,
+  "rho_defocus": 0.6610840857972515,
+  "light_ratio": 1.6077594386912235,
+  "range_03": 0.9439631664680149,
+  "range_06": 0.9773241807066234,
+  "cv_repeat_percent": 0.059474522202610916
+ },
+ {
+  "metric": "app_tile_median",
+  "rho_truth": 0.942968423981082,
+  "rho_defocus": 0.8005339045444695,
+  "light_ratio": 1.779415622049911,
+  "range_03": 1.1954849110185068,
+  "range_06": 1.7615299647267475,
+  "cv_repeat_percent": 0.19715112254665002
+ },
+ {
+  "metric": "qr_lapvar_1024",
+  "rho_truth": 0.9735707330644038,
+  "rho_defocus": 0.8468128553814585,
+  "light_ratio": 1.5790084913152582,
+  "range_03": 1.0624140813221452,
+  "range_06": 1.2880690157728234,
+  "cv_repeat_percent": 0.0944330588360532
+ },
+ {
+  "metric": "qr_lapvar_full",
+  "rho_truth": 0.9743041768358223,
+  "rho_defocus": 0.8606045956971173,
+  "light_ratio": 2.1302278866051334,
+  "range_03": 1.1213899811468102,
+  "range_06": 1.5511392474784427,
+  "cv_repeat_percent": 0.17928571978252605
+ },
+ {
+  "metric": "qr_lapvar_norm",
+  "rho_truth": 0.9725843776476687,
+  "rho_defocus": 0.8633629437602491,
+  "light_ratio": 1.8633552311303063,
+  "range_03": 1.1136958005535214,
+  "range_06": 1.5129419468675789,
+  "cv_repeat_percent": 0.14568634379992407
+ },
+ {
+  "metric": "qr_tenengrad_full",
+  "rho_truth": 0.9760998495175709,
+  "rho_defocus": 0.8431350579639494,
+  "light_ratio": 1.721495457588175,
+  "range_03": 1.0779867954413411,
+  "range_06": 1.3296796758063258,
+  "cv_repeat_percent": 0.03521199702252839
+ },
+ {
+  "metric": "qr_tenengrad_norm",
+  "rho_truth": 0.9749364559491142,
+  "rho_defocus": 0.8670407411777581,
+  "light_ratio": 1.5058282006923944,
+  "range_03": 1.0707896302198636,
+  "range_06": 1.2978870109232907,
+  "cv_repeat_percent": 0.09513671773353476
+ },
+ {
+  "metric": "qr_lapvar_minus_noise",
+  "rho_truth": 0.9746076708102024,
+  "rho_defocus": 0.8587656969883628,
+  "light_ratio": 2.1602703300926613,
+  "range_03": 1.1227368348797255,
+  "range_06": 1.5595535518363146,
+  "cv_repeat_percent": 0.1805888934967447
+ },
+ {
+  "metric": "edge_width_marziliano",
+  "rho_truth": 0.9540598715489274,
+  "rho_defocus": 0.8582207355039567,
+  "light_ratio": 0.42857142857142855,
+  "range_03": 1.1166666666666667,
+  "range_06": 1.5,
+  "cv_repeat_percent": 0.0
+ },
+ {
+  "metric": "sfr_width10_90",
+  "rho_truth": 0.9607349042864596,
+  "rho_defocus": 0.8639913071734037,
+  "light_ratio": 0.5214285714285715,
+  "range_03": 1.0985915492957747,
+  "range_06": 1.5258215962441315,
+  "cv_repeat_percent": 0.9959250439247148
+ },
+ {
+  "metric": "sfr_mtf50",
+  "rho_truth": 0.9999999999999999,
+  "rho_defocus": 0.8234435176243696,
+  "light_ratio": 1.5574664020108988,
+  "range_03": 1.0492682087469607,
+  "range_06": 1.2875951099067453,
+  "cv_repeat_percent": 1.751876706999186
+ }
+]

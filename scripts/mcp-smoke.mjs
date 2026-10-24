@@ -80,7 +80,7 @@ try {
     assert.equal(result.isError, false);
     assert.ok(isJpeg(jpegBytes(images(result)[0].data)));
   });
-  await check('take_photo: handle and metrics, no image, no link', async () => {
+  await check('take_photo: handle, no image, no link, and no metric processing unless asked', async () => {
     const started = performance.now();
     const result = await tool('take_photo');
     const photo = expectOk(result, 'take_photo');
@@ -88,12 +88,20 @@ try {
     assert.equal(images(result).length, 0);
     assert.match(photo.handle, new RegExp('^'+report.bootId+'-[0-9a-f]{8}$'));
     assert.ok(photo.bytes > 10000); assert.equal(photo.sha256.length, 64);
-    const m = photo.metrics;
-    assert.ok(m.sharpness >= 0 && m.sharpnessCenter >= 0);
+    assert.equal(photo.metrics, undefined, 'metrics must not be computed unless requested');
+    assert.equal(data(await tool('get_capture_info', {handle:photo.handle})).metrics, undefined, 'plain info must not compute metrics either');
+    assert.equal(data(await tool('list_captures')).captures.find(c => c.handle === photo.handle).sharpness, undefined);
+    const asked = data(await tool('get_capture_info', {handle:photo.handle, include_metrics:true}));
+    const m = asked.metrics;
+    assert.ok(m && m.sharpness >= 0 && m.sharpnessCenter >= 0);
     assert.equal(m.sharpnessGrid.length, 4); assert.ok(m.sharpnessGrid.every(row => row.length === 4));
     assert.ok(m.meanBrightness >= 0 && m.meanBrightness <= 255 && m.contrast >= 0);
     assert.ok(m.overexposedPercent >= 0 && m.overexposedPercent <= 100);
     assert.ok(!('originalUrl' in photo) && !('url' in photo));
+    assert.deepEqual(data(await tool('get_capture_info', {handle:photo.handle})).metrics, m, 'computed metrics are kept with the photo');
+    const inline = expectOk(await tool('take_photo', {include_metrics:true}), 'take_photo with metrics');
+    assert.ok(inline.metrics && inline.metrics.sharpness >= 0, 'include_metrics returns metrics inline');
+    await tool('release_capture', {handle:inline.handle});
     report.firstPhoto = {elapsedMs:Math.round(performance.now()-started), bytes:photo.bytes, width:photo.width, height:photo.height, focus:photo.focus, metrics:m};
   });
   await check('take_photo with include_preview attaches one smaller image', async () => {

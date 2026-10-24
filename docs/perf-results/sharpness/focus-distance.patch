@@ -1,0 +1,42 @@
+diff --git a/androidApp/src/main/java/dev/hram/mobileledger/CameraService.kt b/androidApp/src/main/java/dev/hram/mobileledger/CameraService.kt
+index 132a446..5a2f6ff 100644
+--- a/androidApp/src/main/java/dev/hram/mobileledger/CameraService.kt
++++ b/androidApp/src/main/java/dev/hram/mobileledger/CameraService.kt
+@@ -96,6 +96,7 @@ class CameraService : Service(), LifecycleOwner {
+     @Volatile private var cameraError: String? = null
+     private val focusController by lazy { FocusController(main, ContextCompat.getMainExecutor(this)) }
+     fun focusStatus(): JSONObject = focusController.json()
++    fun debugFocusDistance(diopters: Float): Boolean { main.post { focusController.debugSetDistance(diopters) }; return true }
+     @Volatile private var torch = false
+     @Volatile private var hasFlash = false
+     private var closing = false
+diff --git a/androidApp/src/main/java/dev/hram/mobileledger/FocusController.kt b/androidApp/src/main/java/dev/hram/mobileledger/FocusController.kt
+index 124fc6a..c72cf54 100644
+--- a/androidApp/src/main/java/dev/hram/mobileledger/FocusController.kt
++++ b/androidApp/src/main/java/dev/hram/mobileledger/FocusController.kt
+@@ -29,6 +29,13 @@ class FocusController(private val main: Handler, private val executor: Executor)
+     @Volatile private var scanCount = 0
+     private var pendingOptions: CompletableFuture<Void>? = null
+ 
++    // TEMPORARY EXPERIMENT (not for commit): put the lens at a given distance (diopters) to make a controlled defocus series.
++    fun debugSetDistance(distance: Float): Boolean {
++        if (!state.manualLock) return false
++        setStill(distance, "locking")
++        return true
++    }
++
+     fun json(): JSONObject {
+         val value = state
+         return JSONObject().put("state", value.state).put("manualLock", value.manualLock)
+diff --git a/androidApp/src/main/java/dev/hram/mobileledger/PhoneServer.kt b/androidApp/src/main/java/dev/hram/mobileledger/PhoneServer.kt
+index b99c2cd..41c9400 100644
+--- a/androidApp/src/main/java/dev/hram/mobileledger/PhoneServer.kt
++++ b/androidApp/src/main/java/dev/hram/mobileledger/PhoneServer.kt
+@@ -111,6 +111,7 @@ class PhoneServer(private val camera: CameraService, private val token: String)
+                     if (reply == null) respond(socket, 202, ByteArray(0), "application/json") else json(socket, 200, reply)
+                 }
+                 "GET /mcp", "DELETE /mcp" -> respond(socket, 405, ByteArray(0), "application/json", mapOf("Allow" to "POST"))
++                "POST /debug/focus-distance" -> json(socket, 200, JSONObject().put("posted", camera.debugFocusDistance(body.getDouble("diopters").toFloat())))
+                 "POST /torch" -> {
+                     val ok = camera.setTorch(body.getBoolean("enabled"))
+                     json(socket, if (ok) 200 else 400, if (ok) JSONObject().put("ok", true) else JSONObject().put("error", "torch_unavailable"))

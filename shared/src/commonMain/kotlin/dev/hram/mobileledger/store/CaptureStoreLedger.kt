@@ -63,6 +63,12 @@ class CaptureStoreLedger(
         entry.requestId?.let { requests[it] = entry.handle }
     }
 
+    /** Replaces the opaque metadata of a live entry (used to attach metrics computed later, on request). */
+    fun updateMetadata(handle: String, metadata: String): Entry? {
+        val entry = entries[handle] ?: return null
+        return entry.copy(metadata = metadata).also { entries[handle] = it }
+    }
+
     fun byRequest(requestId: String): Entry? = requests[requestId]?.let { entries[it] }
 
     fun list(): List<Entry> = entries.values.toList()
