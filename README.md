@@ -1,4 +1,4 @@
-# mobile-ledger: телефон, который снимает по команде
+# androsaur-camera: телефон, который снимает по команде
 
 Обычный Android-телефон на штативе, который превращается в документ-камеру: вы смотрите
 на лист в браузере компьютера, нажимаете кнопку и получаете оригинальный снимок в 12,5
@@ -95,7 +95,7 @@ adb install -r androidApp/build/outputs/apk/debug/androidApp-debug.apk
 (адрес содержит код доступа, не публикуйте его). Подключить агента:
 
 ```sh
-claude mcp add --transport http mobile-ledger http://<адрес телефона>:8088/mcp \
+claude mcp add --transport http androsaur-camera http://<адрес телефона>:8088/mcp \
   --header "Authorization: Bearer <код с телефона>"
 ```
 

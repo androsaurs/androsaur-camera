@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 const serial = process.env.ANDROID_SERIAL;
 assert.ok(serial?.startsWith('emulator-'), 'Run this capture test only on a disposable emulator');
-const xml = execFileSync('adb', ['-s', serial, 'shell', 'run-as', 'dev.hram.mobileledger.prototype', 'cat', 'shared_prefs/camera.xml'], {encoding: 'utf8'});
+const xml = execFileSync('adb', ['-s', serial, 'shell', 'run-as', 'dev.hram.androsaur.camera', 'cat', 'shared_prefs/camera.xml'], {encoding: 'utf8'});
 const token = xml.match(/name="access_token">([^<]+)/)?.[1]; assert.ok(token);
 const base = process.env.CAMERA_BASE || 'http://127.0.0.1:18090';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));

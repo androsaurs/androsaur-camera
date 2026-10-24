@@ -5,7 +5,7 @@ import {execFileSync} from 'node:child_process';
 import {mkdir, writeFile} from 'node:fs/promises';
 
 const base = process.env.CAMERA_BASE || 'http://127.0.0.1:18088';
-const app = 'dev.hram.mobileledger.prototype';
+const app = 'dev.hram.androsaur.camera';
 const xml = execFileSync('adb', ['shell', 'run-as', app, 'cat', 'shared_prefs/camera.xml'], {encoding:'utf8'});
 const token = xml.match(/name="access_token">([^<]+)/)?.[1];
 assert.ok(token, 'Launch the application once to generate the prototype access token');
@@ -53,7 +53,7 @@ try {
   await check('GET /mcp is not allowed', async () => assert.equal((await fetch(base+'/mcp', {headers:auth})).status, 405));
   await check('initialize, notification, ping, unknown method', async () => {
     const init = await rpc('initialize', {protocolVersion:'2025-06-18', capabilities:{}, clientInfo:{name:'smoke', version:'1'}});
-    assert.equal(init.result.serverInfo.name, 'mobile-ledger');
+    assert.equal(init.result.serverInfo.name, 'androsaur-camera');
     assert.equal((await post({jsonrpc:'2.0', method:'notifications/initialized'})).status, 202);
     assert.deepEqual((await rpc('ping')).result, {});
     assert.equal((await rpc('no/such')).error.code, -32601);
@@ -269,7 +269,7 @@ try {
   });
   await check('app restart: new bootId, old handle is not_found/restarted', async () => {
     execFileSync('adb', ['shell', 'am', 'force-stop', app]);
-    execFileSync('adb', ['shell', 'am', 'start', '-n', `${app}/dev.hram.mobileledger.MainActivity`]);
+    execFileSync('adb', ['shell', 'am', 'start', '-n', `${app}/dev.hram.androsaur.camera.MainActivity`]);
     await delay(4000);
     const s = await waitReady();
     assert.notEqual(s.captureStore.bootId, report.bootId);

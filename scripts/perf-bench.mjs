@@ -11,7 +11,7 @@ const base = process.env.CAMERA_BASE || 'http://127.0.0.1:18088';
 const label = process.env.LABEL || 'usb';
 const torchOn = process.env.TORCH === 'on';
 const sections = new Set((process.argv[2] || 'preview,capture,sustained,contention,mcp').split(','));
-const app = 'dev.hram.mobileledger.prototype';
+const app = 'dev.hram.androsaur.camera';
 const adb = (...args) => execFileSync('adb', args, {encoding:'utf8', maxBuffer:256 * 1024 * 1024});
 const token = adb('shell', 'run-as', app, 'cat', 'shared_prefs/camera.xml').match(/name="access_token">([^<]+)/)?.[1];
 assert.ok(token, 'Launch the application once to generate the prototype access token');
@@ -285,7 +285,7 @@ try {
   report.environment.deviceAfter = device();
   // The vendor camera HAL floods the main buffer with E lines, so only the crash buffer and AndroidRuntime are read.
   const crashes = adb('logcat', '-d', '-b', 'crash') + adb('logcat', '-d', '-b', 'main', '-s', 'AndroidRuntime:E');
-  report.crashLog = crashes.split('\n').filter(l => /mobileledger|FATAL|OutOfMemory/.test(l)).slice(0, 10);
+  report.crashLog = crashes.split('\n').filter(l => /androsaur|FATAL|OutOfMemory/.test(l)).slice(0, 10);
   const pidBefore = report.environment.deviceBefore.pid; const pidAfter = report.environment.deviceAfter.pid;
   report.processSameAsAtStart = pidBefore && pidAfter ? pidBefore === pidAfter : null; // null: adb could not tell
 } finally {

@@ -12,7 +12,7 @@
 adb install -r androidApp/build/outputs/apk/debug/androidApp-debug.apk
 ```
 
-При первичной настройке открыть «Mobile Ledger · прототип» и разрешить камеру
+При первичной настройке открыть «Androsaur Камера» и разрешить камеру
 и уведомления. Служба подключения запускается автоматически при открытии
 приложения; отдельное нажатие «Запустить камеру» больше не требуется.
 Приложение показывает адрес пульта с индивидуальным кодом
@@ -128,6 +128,7 @@ HTTP-клиент при наличии сетевого доступа к те�
 | `POST /ack` | `{requestId, clientId}` — браузер получил файл, удалить локальную копию |
 | `POST /cancel` | `{requestId, clientId}` — отменить запрос этой вкладки |
 | `POST /torch` | `{enabled: boolean}` — постоянная подсветка |
+| `POST /camera` | `{lens: "back" \| "front"}` — выбор камеры, сохраняется между запусками; 400 `invalid_lens`, 409 `lens_unavailable`, `camera_busy`, `calibration_active`, `focus_busy`. Текущая — `lens` и `lenses` в `GET /status` |
 | `POST /calibration/tolerance` | `{tolerancePercent: number}` — допуск калибровки 0,1–5%, сохраняется между запусками |
 | `POST /calibration/session` | `{clientId: string, active: boolean}` — аренда удалённой калибровки на 12 секунд |
 | `GET /calibration/frame` | JSON: JPEG-превью и геометрия одного кадра; 202 при прогреве, 409 без калибровки |
@@ -139,7 +140,7 @@ HTTP-клиент при наличии сетевого доступа к те�
 сторонних библиотек. Подключение с тем же кодом доступа, что и у остальных API:
 
 ```sh
-claude mcp add --transport http mobile-ledger http://IP-ТЕЛЕФОНА:8088/mcp \
+claude mcp add --transport http androsaur-camera http://IP-ТЕЛЕФОНА:8088/mcp \
   --header "Authorization: Bearer <код с телефона>"
 ```
 
@@ -159,6 +160,7 @@ claude mcp add --transport http mobile-ledger http://IP-ТЕЛЕФОНА:8088/mc
 | `list_captures`, `get_capture_info` | Список хэндлов и полные метаданные |
 | `release_capture` | Удалить снимок и его ссылки |
 | `torch`, `focus` | Подсветка и фокусировка, как в HTTP-API |
+| `set_camera` | Выбор камеры `back` (по умолчанию, документ-камера) или `front`; то же, что `POST /camera` |
 
 **Метрики считаются только по запросу** (`include_metrics` в `take_photo` или в `get_capture_info`;
 без него обработка не запускается ни при съёмке, ни при просмотре списка и информации), около
@@ -245,6 +247,13 @@ claude mcp add --transport http mobile-ledger http://IP-ТЕЛЕФОНА:8088/mc
 В сборке v7 фокусировка только по запросу, без непрерывного AF и наведения
 перед снимком. `X-Focus-Status`: `locked` или `on-demand`; прежние версии
 возвращали `focused`, `recent`, `failed`, `timeout`, `unsupported`.
+
+**Фронтальная камера.** `lens` в `GET /status`, `POST /camera` и MCP `set_camera`. Выбор общий для всех
+клиентов и сохраняется. Пока выбрана `front`: съёмка не от MCP-агента (браузер paper-ledger) отвечает
+409 `front_camera_selected`, калибровка и `focus` недоступны (тот же код), `torch` — по наличию вспышки
+(на Redmi 12 её нет). Фокус фронтальной камеры штатный (правило «фокус только по запросу» относится к
+документ-камере), в метаданных снимка `focus: "auto"`. Кадры не отзеркалены. Калибровка и сканер работают
+только с задней камерой.
 
 `GET /focus` — состояние, `POST /focus` — `{action: "focus" | "lock", x: 0.5, y: 0.5}`.
 Координаты нормализованы относительно JPEG-превью с учётом его поворота,

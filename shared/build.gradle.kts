@@ -4,4 +4,4 @@ kotlin {
     jvm()
     sourceSets.commonTest.dependencies { implementation(kotlin("test")) }
 }
-android { namespace = "dev.hram.mobileledger.shared"; compileSdk = 35; defaultConfig { minSdk = 26 } }
+android { namespace = "dev.hram.androsaur.camera.shared"; compileSdk = 35; defaultConfig { minSdk = 26 } }

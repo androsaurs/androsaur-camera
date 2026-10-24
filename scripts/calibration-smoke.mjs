@@ -5,7 +5,7 @@ import {execFileSync} from 'node:child_process';
 const device = process.env.ANDROID_SERIAL;
 assert.ok(device, 'Set ANDROID_SERIAL explicitly');
 const adb = (...args) => execFileSync('adb', ['-s', device, ...args], {encoding: 'utf8'});
-const xml = adb('shell', 'run-as', 'dev.hram.mobileledger.prototype', 'cat', 'shared_prefs/camera.xml');
+const xml = adb('shell', 'run-as', 'dev.hram.androsaur.camera', 'cat', 'shared_prefs/camera.xml');
 const token = xml.match(/name="access_token">([^<]+)/)?.[1];
 assert.ok(token, 'Open the application first');
 const base = process.env.CAMERA_BASE || 'http://127.0.0.1:18089';
@@ -37,7 +37,7 @@ try {
   }
   console.log('PASS invalid commands preserve current tolerance');
   for (let attempt = 0; attempt < 20; attempt++) {
-    const settings = adb('shell', 'run-as', 'dev.hram.mobileledger.prototype', 'cat', 'shared_prefs/calibration.xml');
+    const settings = adb('shell', 'run-as', 'dev.hram.androsaur.camera', 'cat', 'shared_prefs/calibration.xml');
     if (/name="tolerancePercent">5\.0<\/string>/.test(settings)) break;
     assert.ok(attempt < 19, 'Setting was not persisted');
     await new Promise(resolve => setTimeout(resolve, 100));

@@ -49,7 +49,7 @@
    освобождение камеры через 15 с без обращений. Новые профили включаются только явно.
 2. **Замороженный HTTP-контракт.** Пути и их семантика не меняются: `GET /`,
    `GET /status`, `GET /frame.jpg`, `POST /capture`, `GET /result`, `POST /ack`,
-   `POST /cancel`, `POST /torch`, `GET|POST /focus`, `POST /calibration/tolerance`,
+   `POST /cancel`, `POST /torch`, `POST /camera` (добавлен, не меняет прежних), `GET|POST /focus`, `POST /calibration/tolerance`,
    `POST /calibration/session`, `GET /calibration/frame`, `POST /mcp`, `GET /dl/<токен>`.
    Правила `requestId`, `camera_busy`, адресной доставки вкладке, ACK и замены
    слота браузера остаются как в SPEC. Новое добавляется новыми путями и новыми

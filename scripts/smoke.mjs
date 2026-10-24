@@ -4,7 +4,7 @@ import {execFileSync} from 'node:child_process';
 import {mkdir, writeFile} from 'node:fs/promises';
 
 const base = process.env.CAMERA_BASE || 'http://127.0.0.1:18088';
-const xml = execFileSync('adb', ['shell', 'run-as', 'dev.hram.mobileledger.prototype', 'cat', 'shared_prefs/camera.xml'], {encoding:'utf8'});
+const xml = execFileSync('adb', ['shell', 'run-as', 'dev.hram.androsaur.camera', 'cat', 'shared_prefs/camera.xml'], {encoding:'utf8'});
 const token = xml.match(/name="access_token">([^<]+)/)?.[1];
 assert.ok(token, 'Launch the application once to generate the prototype access token');
 const delay = ms => new Promise(r => setTimeout(r, ms));
@@ -59,7 +59,7 @@ try {
     assert.equal((await api('/ack',second)).status,200);
     assert.equal((await api('/result?'+new URLSearchParams(second))).status,410);
     assert.equal((await api('/capture',second)).status,410);
-    const files=execFileSync('adb',['shell','run-as','dev.hram.mobileledger.prototype','ls','files/captures'],{encoding:'utf8'}).trim();
+    const files=execFileSync('adb',['shell','run-as','dev.hram.androsaur.camera','ls','files/captures'],{encoding:'utf8'}).trim();
     assert.equal(files,'');
   });
   await check('cancellation discards request',async()=>{
