@@ -12,6 +12,7 @@
         </activity>
         <activity android:name=".CalibrationActivity" android:exported="false" />
         <activity android:name=".FaceLabActivity" android:exported="false" android:screenOrientation="portrait" />
+        <activity android:name=".PeopleActivity" android:exported="false" android:screenOrientation="portrait" />
         <service android:name=".CameraService" android:exported="false" android:foregroundServiceType="camera" />
     </application>
 </manifest>

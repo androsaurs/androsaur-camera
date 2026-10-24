@@ -8,6 +8,8 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1-prototype"
+        // Phones only: ONNX Runtime and MediaPipe carry a native library per architecture, and x86 doubles the APK.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
     buildFeatures { compose = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
@@ -24,4 +26,6 @@ dependencies {
     // Face-detector experiments (FaceLab): ML Kit (bundled model) and MediaPipe BlazeFace.
     implementation("com.google.mlkit:face-detection:16.1.7")
     implementation("com.google.mediapipe:tasks-vision:0.10.21")
+    // Face recognition (FaceId): the SFace model runs in ONNX Runtime.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
 }

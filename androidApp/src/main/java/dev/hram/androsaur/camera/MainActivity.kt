@@ -59,6 +59,9 @@ class MainActivity : ComponentActivity() {
                         OutlinedButton(onClick = {
                             startActivity(Intent(this@MainActivity, FaceLabActivity::class.java))
                         }, modifier = Modifier.fillMaxWidth()) { Text("Лаборатория лиц") }
+                        OutlinedButton(onClick = {
+                            startActivity(Intent(this@MainActivity, PeopleActivity::class.java))
+                        }, modifier = Modifier.fillMaxWidth()) { Text("Люди") }
                         Button(onClick = { requestStart() }, modifier = Modifier.fillMaxWidth()) { Text("Запустить камеру") }
                         OutlinedButton(onClick = {
                             manuallyStopped = true

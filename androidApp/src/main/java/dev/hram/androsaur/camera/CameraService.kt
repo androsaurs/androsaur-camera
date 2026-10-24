@@ -109,6 +109,9 @@ class CameraService : Service(), LifecycleOwner {
     /** Face-detector experiments; see [FaceLab]. Front camera only, off by default, and it keeps the camera awake while on. */
     val faceLab by lazy { FaceLab(this) }
     @Volatile private var faceLabOn = false
+    /** Teaching and recognizing people (the people screen); shares the lab's preview, front camera and lens restore. */
+    val faceId by lazy { FaceId(this, PeopleStore(File(filesDir, "people/people.json"))) }
+    @Volatile private var peopleOn = false
     /** The lab screen's preview, while it is open; the lens it switched away from is restored when it closes. */
     private var faceView: PreviewView? = null
     private var lensBeforeLab: Lens? = null
@@ -131,7 +134,7 @@ class CameraService : Service(), LifecycleOwner {
             if (changed) reconfigureCalibration()
             agentStore.sweep()
             registerLightSensor()
-            if (faceLabOn) lastSeen = SystemClock.elapsedRealtime()
+            if (faceLabOn || peopleOn) lastSeen = SystemClock.elapsedRealtime()
             val idle = synchronized(gate) { !ledger.capturing }
             if (idle && !calibrationMode && SystemClock.elapsedRealtime() - lastSeen > 15_000 && camera != null) {
                 focusController.detach(); provider?.unbindAll(); camera = null; capture = null; latestFrame = null
@@ -190,6 +193,7 @@ class CameraService : Service(), LifecycleOwner {
         focusController.detach()
         provider?.unbindAll()
         faceLab.close()
+        faceId.close()
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         executor.shutdownNow()
         synchronized(gate) { result?.delete() }
@@ -262,6 +266,33 @@ class CameraService : Service(), LifecycleOwner {
         }
         main.post { if (!closing && provider != null) { cameraState = "starting"; bindCamera() } }
         return 200 to JSONObject().put("lens", "front")
+    }
+
+    /** The people screen opens: the front camera for now (the saved choice stays), its preview in [view], and teaching or testing can begin. */
+    fun startPeople(view: PreviewView): Pair<Int, JSONObject> {
+        synchronized(gate) {
+            if (Lens.FRONT !in availableLenses) return 409 to JSONObject().put("error", "lens_unavailable")
+            if (ledger.capturing) return 409 to JSONObject().put("error", "camera_busy")
+            if (calibrationMode || calibrationSessions.hasClients(SystemClock.elapsedRealtime())) return 409 to JSONObject().put("error", "calibration_active")
+            if (faceView != null && faceView !== view) return 409 to JSONObject().put("error", "lab_screen_open")
+            if (lens != Lens.FRONT) { lensBeforeLab = lens; lens = Lens.FRONT; supportedSizes = emptyList() }
+            faceView = view; peopleOn = true
+            lastSeen = SystemClock.elapsedRealtime(); latestFrame = null
+        }
+        main.post { if (!closing && provider != null) { cameraState = "starting"; bindCamera() } }
+        return 200 to JSONObject().put("lens", "front")
+    }
+
+    /** The people screen closes: the recognizer stops and the camera goes back as it was. */
+    fun stopPeople(view: PreviewView) {
+        synchronized(gate) {
+            if (faceView !== view) return
+            faceView = null; peopleOn = false; faceId.setMode(FaceId.Mode.IDLE)
+            lensBeforeLab?.let { lens = it; supportedSizes = emptyList() }
+            lensBeforeLab = null
+            latestFrame = null
+        }
+        main.post { if (!closing && provider != null && camera != null) { cameraState = "starting"; bindCamera() } }
     }
 
     /** The lab screen closes: stop the detectors and put the camera back as it was. */
@@ -454,6 +485,7 @@ class CameraService : Service(), LifecycleOwner {
             val documentFocus = lens == Lens.BACK
             if (documentFocus) focusController.configure(analysisBuilder)
             val lab = faceLabOn && lens == Lens.FRONT
+            val ids = peopleOn && lens == Lens.FRONT
             if (lab) {
                 // The camera chip's own face detection: rectangles come back with the capture results, no CPU work.
                 androidx.camera.camera2.interop.Camera2Interop.Extender(analysisBuilder)
@@ -469,6 +501,7 @@ class CameraService : Service(), LifecycleOwner {
                 analysisDelivered.incrementAndGet()
                 try {
                     if (lab) faceLab.analyze(image)
+                    if (ids) faceId.analyze(image)
                     if (SystemClock.elapsedRealtime() < previewDemandUntil) {
                         val started = SystemClock.elapsedRealtimeNanos()
                         latestFrame = publish(previewJpeg(image))
@@ -479,7 +512,7 @@ class CameraService : Service(), LifecycleOwner {
                 finally { image.close() }
             }
             val labView = faceView
-            val labPreview = if (lab && labView != null) Preview.Builder()
+            val labPreview = if ((lab || ids) && labView != null) Preview.Builder()
                 .setResolutionSelector(ResolutionSelector.Builder().setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY).build()).build()
                 .also { it.setSurfaceProvider(labView.surfaceProvider) } else null
             camera = if (labPreview != null) p.bindToLifecycle(this, selectorFor(lens), photo, analysis, labPreview)
