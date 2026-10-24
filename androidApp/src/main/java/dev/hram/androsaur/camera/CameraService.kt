@@ -227,17 +227,17 @@ class CameraService : Service(), LifecycleOwner {
         return 200 to JSONObject().put("lens", wanted.id).put("changed", true)
     }
 
-    /** The modes by the software detectors they run: A none (only the camera chip's), B ML Kit, C MediaPipe, D both. */
+    /** The modes by the software detectors they run: A none (only the camera chip's), B ML Kit, C MediaPipe, D both, E the MediaPipe landmarker. */
     private fun modeOf(detectors: List<String>): String? = when (detectors.toSet()) {
-        emptySet<String>() -> "A"; setOf("mlkit") -> "B"; setOf("mediapipe") -> "C"; setOf("mlkit", "mediapipe") -> "D"; else -> null
+        emptySet<String>() -> "A"; setOf("mlkit") -> "B"; setOf("mediapipe") -> "C"; setOf("mlkit", "mediapipe") -> "D"; setOf("landmarker") -> "E"; else -> null
     }
 
     /** Starts or stops the face-detector experiment without a screen (front camera only) and sets its mode or counters. */
     fun setFaceLab(enabled: Boolean?, reset: Boolean, mode: String? = null, detectors: List<String>? = null): Pair<Int, JSONObject> {
         if (enabled == true && lens != Lens.FRONT) return 409 to JSONObject().put("error", "front_camera_required")
         if (enabled == false && faceView != null) return 409 to JSONObject().put("error", "lab_screen_open")
-        val wanted = mode ?: detectors?.let { modeOf(it) ?: return 400 to JSONObject().put("error", "invalid_detectors").put("detectors", JSONArray().put("mlkit").put("mediapipe")) }
-        if (wanted != null && !faceLab.switchTo(wanted)) return 400 to JSONObject().put("error", "invalid_mode").put("modes", JSONArray().put("A").put("B").put("C").put("D"))
+        val wanted = mode ?: detectors?.let { modeOf(it) ?: return 400 to JSONObject().put("error", "invalid_detectors").put("detectors", JSONArray().put("mlkit").put("mediapipe").put("landmarker")) }
+        if (wanted != null && !faceLab.switchTo(wanted)) return 400 to JSONObject().put("error", "invalid_mode").put("modes", JSONArray().put("A").put("B").put("C").put("D").put("E"))
         if (reset) faceLab.reset()
         if (enabled != null && enabled != faceLabOn) {
             if (enabled) { faceLab.reset(); lastSeen = SystemClock.elapsedRealtime() }

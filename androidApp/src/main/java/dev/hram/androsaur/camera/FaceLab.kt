@@ -13,11 +13,16 @@ import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.facedetector.FaceDetector as MediaPipeFaceDetector
+import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarker
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.asin
 
 /**
  * Experiment bench for face detectors on the front camera: the same analysis frames go through ML Kit and
@@ -26,7 +31,12 @@ import org.json.JSONObject
  * Boxes are fractions 0-1 of the upright, unmirrored image (x to the right, y downwards).
  */
 class FaceLab(private val context: Context) {
-    class Box(val x: Double, val y: Double, val w: Double, val h: Double, val score: Double?)
+    /**
+     * A face frame: fractions of the upright, unmirrored image; [angle] is the head tilt in degrees, clockwise in that image
+     * (the frame is turned about its centre); [points] are landmarks as x,y pairs of fractions; [pose] is pitch/yaw/roll text.
+     */
+    class Box(val x: Double, val y: Double, val w: Double, val h: Double, val score: Double?,
+              val angle: Double = 0.0, val points: FloatArray? = null, val pose: String? = null)
 
     /** What the screen draws for one detector right now. Boxes are fractions of the upright, unmirrored image. */
     class LiveDetector(val name: String, val state: String, val boxes: List<Box>, val avgMs: Double?, val fps: Double, val ageMs: Long, val withFacePercent: Int)
@@ -53,35 +63,38 @@ class FaceLab(private val context: Context) {
 
     /** What a detector is, independent of the mode: the state does not reset when you switch. */
     private class Info { var state = "idle"; var loadMs = 0L; var error: String? = null }
-    private val infoHw = Info(); private val infoMl = Info(); private val infoMp = Info()
+    private val infoHw = Info(); private val infoMl = Info(); private val infoMp = Info(); private val infoLm = Info()
 
     /** Counters of one mode; modes keep their numbers when you switch away, so a session can be read afterwards. */
     private class Bucket {
-        val hardware = Stats(); val mlkit = Stats(); val mediapipe = Stats()
+        val hardware = Stats(); val mlkit = Stats(); val mediapipe = Stats(); val landmarker = Stats()
         var analysisFrames = 0L
         var activeMs = 0L
         var since = 0L
-        fun clear() { hardware.clear(); mlkit.clear(); mediapipe.clear(); analysisFrames = 0; activeMs = 0; if (since != 0L) since = SystemClock.elapsedRealtime() }
+        fun clear() { hardware.clear(); mlkit.clear(); mediapipe.clear(); landmarker.clear(); analysisFrames = 0; activeMs = 0; if (since != 0L) since = SystemClock.elapsedRealtime() }
         fun elapsed() = activeMs + if (since != 0L) SystemClock.elapsedRealtime() - since else 0L
     }
 
     private val lock = Any()
-    /** Mode A: only the camera chip's detector. B: + ML Kit. C: + MediaPipe. D: all three. The chip's one costs nothing and always reports. */
-    private val buckets = linkedMapOf("A" to Bucket(), "B" to Bucket(), "C" to Bucket(), "D" to Bucket())
-    @Volatile var mode = "D"; private set
+    /** Mode A: only the camera chip's detector. B: + ML Kit. C: + MediaPipe. D: all three. E: + MediaPipe Face Landmarker (478 points). The chip's one costs nothing and always reports. */
+    private val buckets = linkedMapOf("A" to Bucket(), "B" to Bucket(), "C" to Bucket(), "D" to Bucket(), "E" to Bucket())
+    /** MediaPipe is the default detector (mode C); the others stay available for comparison. */
+    @Volatile var mode = "C"; private set
     private var running = false
     private var cpuStart = Process.getElapsedCpuTime()
     private fun bucket() = buckets.getValue(mode)
-    val software: Set<String> get() = when (mode) { "B" -> setOf("mlkit"); "C" -> setOf("mediapipe"); "D" -> setOf("mlkit", "mediapipe"); else -> emptySet() }
+    val software: Set<String> get() = when (mode) { "B" -> setOf("mlkit"); "C" -> setOf("mediapipe"); "D" -> setOf("mlkit", "mediapipe"); "E" -> setOf("landmarker"); else -> emptySet() }
     private val mlkit get() = bucket().mlkit
     private val mediapipe get() = bucket().mediapipe
     private val hardware get() = bucket().hardware
+    private val landmarker get() = bucket().landmarker
     @Volatile private var rotation = 0
     private var upright = 0 to 0
     @Volatile private var activeW = 0
     @Volatile private var activeH = 0
     private var mlkitDetector: com.google.mlkit.vision.face.FaceDetector? = null
     private var mediapipeDetector: MediaPipeFaceDetector? = null
+    private var landmarkerDetector: FaceLandmarker? = null
 
     /** Clears the counters of every mode (or of one). */
     fun reset(only: String? = null) = synchronized(lock) {
@@ -111,7 +124,8 @@ class FaceLab(private val context: Context) {
     fun close() {
         mlkitDetector?.close(); mlkitDetector = null
         mediapipeDetector?.close(); mediapipeDetector = null
-        infoMl.state = "idle"; infoMp.state = "idle"
+        landmarkerDetector?.close(); landmarkerDetector = null
+        infoMl.state = "idle"; infoMp.state = "idle"; infoLm.state = "idle"
     }
 
     /** Active array of the sensor, needed to turn the chip's rectangles into fractions. */
@@ -148,6 +162,7 @@ class FaceLab(private val context: Context) {
         synchronized(lock) { bucket().analysisFrames++; upright = uw to uh }
         if ("mlkit" in software) runMlKit(image, degrees, uw, uh)
         if ("mediapipe" in software) runMediaPipe(image, degrees, uw, uh)
+        if ("landmarker" in software) runLandmarker(image, degrees, uw, uh)
     }
 
     @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
@@ -165,7 +180,9 @@ class FaceLab(private val context: Context) {
             val started = SystemClock.elapsedRealtimeNanos()
             val faces = Tasks.await(mlkitDetector!!.process(InputImage.fromMediaImage(media, degrees)))
             val elapsed = SystemClock.elapsedRealtimeNanos() - started
-            val boxes = faces.map { f -> f.boundingBox.let { Box(it.left.toDouble() / uw, it.top.toDouble() / uh, it.width().toDouble() / uw, it.height().toDouble() / uh, null) } }
+            // ML Kit's Z angle is counter-clockwise; the frame is turned clockwise.
+            val boxes = faces.map { f -> f.boundingBox.let { Box(it.left.toDouble() / uw, it.top.toDouble() / uh, it.width().toDouble() / uw, it.height().toDouble() / uh, null,
+                angle = -f.headEulerAngleZ.toDouble(), pose = "pitch %.0f yaw %.0f roll %.0f".format(f.headEulerAngleX, f.headEulerAngleY, f.headEulerAngleZ)) } }
             synchronized(lock) { mlkit.add(elapsed, boxes) }
         } catch (e: Exception) {
             Log.w(TAG, "ML Kit face detection failed", e)
@@ -189,13 +206,72 @@ class FaceLab(private val context: Context) {
             val started = SystemClock.elapsedRealtimeNanos()
             val result = mediapipeDetector!!.detect(BitmapImageBuilder(turned).build())
             val elapsed = SystemClock.elapsedRealtimeNanos() - started
-            val boxes = result.detections().map { d -> d.boundingBox().let { Box(it.left.toDouble() / uw, it.top.toDouble() / uh, it.width().toDouble() / uw, it.height().toDouble() / uh,
-                d.categories().firstOrNull()?.score()?.toDouble()) } }
+            val boxes = result.detections().map { d ->
+                // BlazeFace keypoints: 0 and 1 are the eyes; the tilt is the angle of the line between them.
+                val eyes = d.keypoints().orElse(null)?.takeIf { it.size >= 2 }
+                val tilt = eyes?.let { tiltOf(it[0].x().toDouble(), it[0].y().toDouble(), it[1].x().toDouble(), it[1].y().toDouble(), uw, uh) } ?: 0.0
+                d.boundingBox().let { Box(it.left.toDouble() / uw, it.top.toDouble() / uh, it.width().toDouble() / uw, it.height().toDouble() / uh,
+                    d.categories().firstOrNull()?.score()?.toDouble(), angle = tilt) }
+            }
             if (turned !== raw) raw.recycle(); turned.recycle()
             synchronized(lock) { mediapipe.convertNanos += converted; mediapipe.add(elapsed, boxes) }
         } catch (e: Exception) {
             Log.w(TAG, "MediaPipe face detection failed", e)
             synchronized(lock) { infoMp.state = "failed"; infoMp.error = "${e.javaClass.simpleName}: ${e.message}".take(160) }
+        }
+    }
+
+    /** Angle of the line through two points (fractions of the image), clockwise in the image, taken left to right. */
+    private fun tiltOf(ax: Double, ay: Double, bx: Double, by: Double, uw: Int, uh: Int): Double {
+        val (lx, ly, rx, ry) = if (ax <= bx) listOf(ax, ay, bx, by) else listOf(bx, by, ax, ay)
+        return Math.toDegrees(atan2((ry - ly) * uh, (rx - lx) * uw))
+    }
+
+    private fun runLandmarker(image: ImageProxy, degrees: Int, uw: Int, uh: Int) {
+        try {
+            if (landmarkerDetector == null) {
+                val began = SystemClock.elapsedRealtime()
+                landmarkerDetector = FaceLandmarker.createFromOptions(context, FaceLandmarker.FaceLandmarkerOptions.builder()
+                    .setBaseOptions(BaseOptions.builder().setModelAssetPath("face_landmarker/face_landmarker.task").build())
+                    .setRunningMode(RunningMode.IMAGE).setNumFaces(1).setMinFaceDetectionConfidence(0.5f)
+                    .setOutputFaceBlendshapes(false).setOutputFacialTransformationMatrixes(true).build())
+                synchronized(lock) { infoLm.loadMs = SystemClock.elapsedRealtime() - began; infoLm.state = "ready" }
+            }
+            val converting = SystemClock.elapsedRealtimeNanos()
+            val raw = image.toBitmap()
+            val turned = if (degrees == 0) raw else Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, Matrix().apply { postRotate(degrees.toFloat()) }, true)
+            val converted = SystemClock.elapsedRealtimeNanos() - converting
+            val started = SystemClock.elapsedRealtimeNanos()
+            val result = landmarkerDetector!!.detect(BitmapImageBuilder(turned).build())
+            val elapsed = SystemClock.elapsedRealtimeNanos() - started
+            val matrices = result.facialTransformationMatrixes().orElse(null)
+            val boxes = result.faceLandmarks().mapIndexed { i, marks ->
+                val n = marks.size
+                val points = FloatArray(n * 2) { k -> if (k % 2 == 0) marks[k / 2].x() else marks[k / 2].y() }
+                // 33 and 263 are the outer corners of the eyes; their line gives the tilt, and the box is fitted in that tilted frame.
+                val tilt = if (n > 263) tiltOf(marks[33].x().toDouble(), marks[33].y().toDouble(), marks[263].x().toDouble(), marks[263].y().toDouble(), uw, uh) else 0.0
+                val t = Math.toRadians(tilt); val c = cos(t); val sn = sin(t)
+                var minU = Double.MAX_VALUE; var maxU = -Double.MAX_VALUE; var minV = Double.MAX_VALUE; var maxV = -Double.MAX_VALUE
+                for (m in marks) {
+                    val px = m.x() * uw.toDouble(); val py = m.y() * uh.toDouble()
+                    val u = px * c + py * sn; val v = -px * sn + py * c
+                    if (u < minU) minU = u; if (u > maxU) maxU = u; if (v < minV) minV = v; if (v > maxV) maxV = v
+                }
+                val cu = (minU + maxU) / 2; val cv = (minV + maxV) / 2
+                val cx = (cu * c - cv * sn) / uw; val cy = (cu * sn + cv * c) / uh
+                val w = (maxU - minU) / uw; val h = (maxV - minV) / uh
+                // Pitch, yaw and roll from the facial transformation matrix (column-major 4x4). The axes are as MediaPipe reports them.
+                val pose = matrices?.getOrNull(i)?.takeIf { it.size >= 16 }?.let { m ->
+                    val pitch = Math.toDegrees(atan2(m[6].toDouble(), m[10].toDouble())); val yaw = Math.toDegrees(asin((-m[2]).toDouble().coerceIn(-1.0, 1.0))); val roll = Math.toDegrees(atan2(m[1].toDouble(), m[0].toDouble()))
+                    "pitch %.0f yaw %.0f roll %.0f".format(pitch, yaw, roll)
+                }
+                Box(cx - w / 2, cy - h / 2, w, h, null, angle = tilt, points = points, pose = pose)
+            }
+            if (turned !== raw) raw.recycle(); turned.recycle()
+            synchronized(lock) { landmarker.convertNanos += converted; landmarker.add(elapsed, boxes) }
+        } catch (e: Exception) {
+            Log.w(TAG, "MediaPipe face landmarker failed", e)
+            synchronized(lock) { infoLm.state = "failed"; infoLm.error = "${e.javaClass.simpleName}: ${e.message}".take(160) }
         }
     }
 
@@ -219,6 +295,7 @@ class FaceLab(private val context: Context) {
             .put("hardware", describe(b.hardware, infoHw, windowMs, timed = false))
             .put("mlkit", describe(b.mlkit, infoMl, windowMs, timed = true))
             .put("mediapipe", describe(b.mediapipe, infoMp, windowMs, timed = true))
+            .put("landmarker", describe(b.landmarker, infoLm, windowMs, timed = true))
     }
 
     /** For the screen: the newest boxes and figures of each detector in the current mode. */
@@ -230,7 +307,7 @@ class FaceLab(private val context: Context) {
             if (active && name != "hardware") s.recentMs() else null, if (windowMs > 0) s.frames * 1000.0 / windowMs else 0.0,
             if (s.lastAt == 0L) -1 else now - s.lastAt, if (s.frames > 0) (100 * s.withFace / s.frames).toInt() else 0)
         Live(mode, upright.first, upright.second, listOf(
-            one("hardware", b.hardware, infoHw, true), one("mlkit", b.mlkit, infoMl, "mlkit" in software), one("mediapipe", b.mediapipe, infoMp, "mediapipe" in software)))
+            one("hardware", b.hardware, infoHw, true), one("mlkit", b.mlkit, infoMl, "mlkit" in software), one("mediapipe", b.mediapipe, infoMp, "mediapipe" in software), one("landmarker", b.landmarker, infoLm, "landmarker" in software)))
     }
 
     private fun describe(s: Stats, info: Info, windowMs: Long, timed: Boolean): JSONObject {
@@ -246,7 +323,8 @@ class FaceLab(private val context: Context) {
             if (s.convertNanos > 0) json.put("convertMsAvg", Math.round(s.convertNanos / s.frames / 1e4) / 100.0)
         }
         json.put("lastBoxes", JSONArray(s.last.map { b ->
-            JSONObject().put("x", r3(b.x)).put("y", r3(b.y)).put("w", r3(b.w)).put("h", r3(b.h)).also { o -> b.score?.let { o.put("score", r3(it)) } }
+            JSONObject().put("x", r3(b.x)).put("y", r3(b.y)).put("w", r3(b.w)).put("h", r3(b.h)).put("angleDeg", Math.round(b.angle * 10) / 10.0).also { o ->
+                b.score?.let { o.put("score", r3(it)) }; b.pose?.let { o.put("pose", it) }; b.points?.let { o.put("points", it.size / 2) } }
         }))
         return json
     }

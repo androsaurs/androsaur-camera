@@ -25,7 +25,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PointMode
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -99,9 +102,10 @@ class FaceLabActivity : ComponentActivity() {
 private val Orange = Color(0xffffb454)
 private val Blue = Color(0xff5aa9ff)
 private val Green = Color(0xff63e6a4)
-private fun colourOf(name: String) = when (name) { "hardware" -> Orange; "mlkit" -> Blue; else -> Green }
-private fun titleOf(name: String) = when (name) { "hardware" -> "Чип камеры"; "mlkit" -> "ML Kit"; else -> "MediaPipe" }
-private val modes = listOf("A" to "чип камеры", "B" to "чип + ML Kit", "C" to "чип + MediaPipe", "D" to "все три")
+private val Pink = Color(0xffff7ad9)
+private fun colourOf(name: String) = when (name) { "hardware" -> Orange; "mlkit" -> Blue; "landmarker" -> Pink; else -> Green }
+private fun titleOf(name: String) = when (name) { "hardware" -> "Чип камеры"; "mlkit" -> "ML Kit"; "landmarker" -> "Landmarker"; else -> "MediaPipe" }
+private val modes = listOf("A" to "чип камеры", "B" to "чип + ML Kit", "C" to "чип + MediaPipe", "D" to "все три", "E" to "Face Landmarker (478 точек)")
 
 @Composable
 private fun FaceLabScreen(preview: PreviewView, service: CameraService?, notice: String?, back: () -> Unit) {
@@ -119,10 +123,18 @@ private fun FaceLabScreen(preview: PreviewView, service: CameraService?, notice:
                     Canvas(Modifier.fillMaxSize()) {
                         live?.detectors?.forEach { d ->
                             if (d.ageMs in 0..1500) d.boxes.forEach { b ->
-                                // The preview of the front camera is a mirror; the detectors report the unmirrored image.
-                                val left = ((1 - (b.x + b.w)) * size.width).toFloat()
-                                val top = (b.y * size.height).toFloat()
-                                drawRect(colourOf(d.name), Offset(left, top), Size((b.w * size.width).toFloat(), (b.h * size.height).toFloat()), style = Stroke(width = 4.dp.toPx()))
+                                // The preview of the front camera is a mirror; the detectors report the unmirrored image,
+                                // so x is flipped and the tilt changes its sign. The frame is turned about its own centre.
+                                val width = (b.w * size.width).toFloat(); val height = (b.h * size.height).toFloat()
+                                val centre = Offset(((1 - (b.x + b.w / 2)) * size.width).toFloat(), ((b.y + b.h / 2) * size.height).toFloat())
+                                rotate(degrees = (-b.angle).toFloat(), pivot = centre) {
+                                    drawRect(colourOf(d.name), Offset(centre.x - width / 2, centre.y - height / 2), Size(width, height), style = Stroke(width = 4.dp.toPx()))
+                                }
+                                b.points?.let { p ->
+                                    val dots = ArrayList<Offset>(p.size / 2)
+                                    for (i in 0 until p.size / 2) dots.add(Offset((1 - p[2 * i]) * size.width, p[2 * i + 1] * size.height))
+                                    drawPoints(dots, PointMode.Points, colourOf(d.name), strokeWidth = 3.dp.toPx(), cap = StrokeCap.Round)
+                                }
                             }
                         }
                     }
@@ -159,7 +171,10 @@ private fun Readout(d: FaceLab.LiveDetector) {
         // Seen as in the mirror preview: the person's right is on the right of the screen.
         val cx = 1 - (it.x + it.w / 2); val cy = it.y + it.h / 2
         listOf(if (cx < 0.4) "слева" else if (cx > 0.6) "справа" else "по центру",
-            if (cy < 0.4) "выше" else if (cy > 0.6) "ниже" else "на высоте центра").joinToString(", ") + " · размер ${Math.round(it.w * 100)}%"
+            if (cy < 0.4) "выше" else if (cy > 0.6) "ниже" else "на высоте центра").joinToString(", ") + " · размер ${Math.round(it.w * 100)}%" +
+            // The frame on the screen turns clockwise for a positive on-screen angle; the angle in the data is of the unmirrored image.
+            (if (kotlin.math.abs(it.angle) >= 1) " · наклон ${Math.round(kotlin.math.abs(it.angle))}° " + (if (-it.angle > 0) "по часовой" else "против часовой") + " на экране" else " · без наклона") +
+            (it.pose?.let { p -> "\n$p" } ?: "") + (it.points?.let { p -> " · точек: ${p.size / 2}" } ?: "")
     }
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {

@@ -47,7 +47,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = lightColorScheme(primary = Color(0xff24654a), background = Color(0xfff5f3ec))) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    Column(Modifier.verticalScroll(rememberScrollState()).padding(28.dp).statusBarsPadding().navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                    Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp).statusBarsPadding().navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("ANDROSAUR", fontSize = 14.sp)
                         Text("Камера", style = MaterialTheme.typography.headlineLarge)
                         LensLine(cameraService)
