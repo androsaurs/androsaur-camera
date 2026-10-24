@@ -27,6 +27,9 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -124,7 +127,8 @@ private fun PeopleScreen(preview: PreviewView, service: CameraService?, notice: 
             when (val now = screen) {
                 Screen.List -> PeopleList(people, notice ?: message, service != null,
                     add = { name -> screen = Screen.Enroll(name) }, test = { screen = Screen.Test },
-                    forget = { name -> service?.faceId?.store?.forget(name); refresh() }, back = back)
+                    forget = { name -> service?.faceId?.store?.forget(name); refresh() },
+                    rename = { old, to -> (service?.faceId?.store?.rename(old, to) ?: "unknown_person").also { refresh() } }, back = back)
                 is Screen.Enroll -> CameraPane(preview, snap, enrolling = true) {
                     EnrollPanel(snap, save = {
                         val saved = service?.faceId?.finishEnroll() ?: -1
@@ -141,8 +145,10 @@ private fun PeopleScreen(preview: PreviewView, service: CameraService?, notice: 
 }
 
 @Composable
-private fun PeopleList(people: List<Pair<String, Int>>, notice: String?, ready: Boolean, add: (String) -> Unit, test: () -> Unit, forget: (String) -> Unit, back: () -> Unit) {
+private fun PeopleList(people: List<Pair<String, Int>>, notice: String?, ready: Boolean, add: (String) -> Unit, test: () -> Unit, forget: (String) -> Unit, rename: (String, String) -> String?, back: () -> Unit) {
     var asking by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf<String?>(null) }
+    var problem by remember { mutableStateOf<String?>(null) }
     var name by remember { mutableStateOf("") }
     var sure by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -155,12 +161,38 @@ private fun PeopleList(people: List<Pair<String, Int>>, notice: String?, ready: 
                 Column(Modifier.weight(1f)) { Text(n, color = Color.White, fontSize = 18.sp); Text("снимков: $count", color = Muted, fontSize = 13.sp) }
                 if (sure == n) {
                     TextButton(onClick = { forget(n); sure = null }) { Text("Точно удалить", color = Amber) }
-                } else TextButton(onClick = { sure = n }) { Text("Удалить") }
+                } else {
+                    TextButton(onClick = { name = n; problem = null; renaming = n }) { Text("Переименовать") }
+                    TextButton(onClick = { sure = n }) { Text("Удалить") }
+                }
             }
         }
         Button(onClick = { name = ""; asking = true }, enabled = ready, modifier = Modifier.fillMaxWidth()) { Text("Добавить человека") }
         OutlinedButton(onClick = test, enabled = ready && people.isNotEmpty(), modifier = Modifier.fillMaxWidth()) { Text("Проверка") }
         OutlinedButton(onClick = back, modifier = Modifier.fillMaxWidth()) { Text("Назад") }
+    }
+    renaming?.let { old ->
+        AlertDialog(
+            onDismissRequest = { renaming = null },
+            title = { Text("Новое имя для «$old»") },
+            text = {
+                Column {
+                    OutlinedTextField(value = name, onValueChange = { name = it.take(40); problem = null }, singleLine = true, label = { Text("Имя") })
+                    problem?.let { Text(it, color = Amber, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp)) }
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = PeopleStore.valid(name.trim()), onClick = {
+                    problem = when (rename(old, name.trim())) {
+                        null -> { renaming = null; null }
+                        "name_taken" -> "Такое имя уже есть"
+                        "invalid_name" -> "Недопустимое имя"
+                        else -> "Человек не найден"
+                    }
+                }) { Text("Переименовать") }
+            },
+            dismissButton = { TextButton(onClick = { renaming = null }) { Text("Отмена") } },
+        )
     }
     if (asking) AlertDialog(
         onDismissRequest = { asking = false },
@@ -183,10 +215,11 @@ private fun CameraPane(preview: PreviewView, snap: FaceId.Snapshot?, enrolling: 
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(Modifier.height(pictureHeight).aspectRatio(3f / 4f)) {
                 AndroidView(factory = { preview }, modifier = Modifier.fillMaxSize())
+                val measurer = rememberTextMeasurer()
                 Canvas(Modifier.fillMaxSize()) {
-                    val face = snap?.face
-                    if (face != null && (snap.faceAgeMs in 0..1500)) {
-                        val known = snap.who?.name != null
+                    if (snap != null && snap.faceAgeMs in 0..1500) snap.faces.forEach { t ->
+                        val face = t.face
+                        val known = t.who?.name != null
                         val colour = if (enrolling || known) Green else Amber
                         val width = (face.w * size.width).toFloat(); val height = (face.h * size.height).toFloat()
                         // The preview of the front camera is a mirror; the numbers are of the unmirrored image.
@@ -197,6 +230,16 @@ private fun CameraPane(preview: PreviewView, snap: FaceId.Snapshot?, enrolling: 
                         // The five points the face is aligned by: pupils, nose tip, mouth corners.
                         for (i in intArrayOf(468, 473, 1, 61, 291)) if (face.points.size > 2 * i + 1)
                             drawCircle(Color.White, 3.dp.toPx(), Offset((1 - face.points[2 * i]) * size.width, face.points[2 * i + 1] * size.height))
+                        if (!enrolling) {
+                            val who = t.who
+                            val label = when {
+                                who == null -> "…"
+                                who.name != null -> "${who.name} %.2f".format(who.best?.similarity ?: 0.0)
+                                else -> "не узнаю"
+                            }
+                            drawText(measurer, label, Offset(maxOf(0f, centre.x - width / 2), maxOf(0f, centre.y - height / 2 - 24.dp.toPx())),
+                                style = TextStyle(color = colour, fontSize = 15.sp))
+                        }
                     }
                 }
             }
@@ -236,32 +279,38 @@ private fun EnrollPanel(snap: FaceId.Snapshot?, save: () -> Unit, cancel: () -> 
 
 @Composable
 private fun TestPanel(snap: FaceId.Snapshot?, service: CameraService?, done: () -> Unit) {
-    val who = snap?.who
-    val fresh = snap?.face != null && snap.faceAgeMs in 0..1500
+    val faces = if (snap != null && snap.faceAgeMs in 0..1500) snap.faces.sortedBy { it.face.x } else emptyList()
     var threshold by remember { mutableStateOf(service?.faceId?.threshold?.toFloat() ?: 0.4f) }
     Text(when {
         snap?.state == "loading" -> "Загружаю модели…"
-        !fresh -> "Лицо не найдено"
-        who == null -> "Смотрю…"
-        who.name != null -> "Это: ${who.name}"
-        else -> "Не узнаю"
-    }, color = if (who?.name != null && fresh) Green else if (fresh) Amber else Muted, fontSize = 26.sp)
+        faces.isEmpty() -> "Лицо не найдено"
+        faces.size == 1 -> "В кадре один человек"
+        else -> "В кадре людей: ${faces.size}"
+    }, color = if (faces.isEmpty()) Muted else Color.White, fontSize = 20.sp)
     snap?.error?.let { Text(it, color = Amber, fontSize = 13.sp) }
-    who?.scores?.forEach { s ->
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(s.name, color = Color.White, modifier = Modifier.width(96.dp), maxLines = 1)
-            LinearProgressIndicator(progress = { s.similarity.coerceIn(0.0, 1.0).toFloat() }, modifier = Modifier.weight(1f),
-                color = if (s.similarity >= threshold) Green else Amber)
-            Text("%.2f".format(s.similarity), color = Muted, modifier = Modifier.width(44.dp))
+    faces.forEach { t ->
+        val who = t.who
+        Text(when {
+            who == null -> "Лицо ${t.id}: смотрю…"
+            who.name != null -> "Лицо ${t.id}: это ${who.name}"
+            else -> "Лицо ${t.id}: не узнаю"
+        }, color = if (who?.name != null) Green else if (who != null) Amber else Muted, fontSize = 18.sp)
+        who?.scores?.forEach { s ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(s.name, color = Color.White, modifier = Modifier.width(96.dp), maxLines = 1)
+                LinearProgressIndicator(progress = { s.similarity.coerceIn(0.0, 1.0).toFloat() }, modifier = Modifier.weight(1f),
+                    color = if (s.similarity >= threshold) Green else Amber)
+                Text("%.2f".format(s.similarity), color = Muted, modifier = Modifier.width(44.dp))
+            }
         }
     }
     Text("Порог узнавания: %.2f (выше — строже)".format(threshold), color = Color.White, fontSize = 14.sp)
     Slider(value = threshold, onValueChange = { threshold = it; service?.faceId?.threshold = it.toDouble() }, valueRange = 0.1f..0.8f)
     snap?.let {
         Text(buildString {
-            it.landmarkerMs?.let { ms -> append("поиск лица %.0f мс".format(ms)) }
+            it.landmarkerMs?.let { ms -> append("поиск лиц %.0f мс".format(ms)) }
             it.embedMs?.let { ms -> append(" · вектор %.0f мс".format(ms)) }
-            append(" · %.1f кадров/с".format(it.fps))
+            append(" · %.1f кадров/с · до 3 лиц".format(it.fps))
         }, color = Muted, fontSize = 13.sp)
     }
     OutlinedButton(onClick = done, modifier = Modifier.fillMaxWidth()) { Text("Назад к списку") }

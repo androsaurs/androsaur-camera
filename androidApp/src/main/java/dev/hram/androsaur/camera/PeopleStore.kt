@@ -25,6 +25,19 @@ class PeopleStore(private val file: File) {
         save()
     }
 
+    /** Gives a person another name, keeping their place in the list. Returns an error code, or null on success. */
+    @Synchronized fun rename(name: String, to: String): String? {
+        if (name !in people) return "unknown_person"
+        if (!valid(to)) return "invalid_name"
+        if (to == name) return null
+        if (to in people) return "name_taken"
+        val renamed = linkedMapOf<String, MutableList<FloatArray>>()
+        people.forEach { (n, v) -> renamed[if (n == name) to else n] = v }
+        people.clear(); people.putAll(renamed)
+        save()
+        return null
+    }
+
     @Synchronized fun forget(name: String): Boolean = (people.remove(name) != null).also { if (it) save() }
 
     private fun load() {

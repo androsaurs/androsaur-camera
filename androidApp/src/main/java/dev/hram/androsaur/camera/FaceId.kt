@@ -28,7 +28,7 @@ import kotlin.math.sin
  * Teaches the camera who is who and recognizes people: the MediaPipe Face Landmarker finds the face and its points,
  * the face is turned onto the template of the recognition model, SFace turns it into 128 numbers and the numbers are
  * compared with the ones taught. Only numbers are stored; pictures never leave the frame.
- * Works one face at a time, on the front camera, while a screen (or the API) has switched it on.
+ * Follows up to [MAX_FACES] faces at once (teaching takes exactly one), on the front camera, while a screen (or the API) has switched it on.
  */
 class FaceId(private val context: Context, val store: PeopleStore) {
     enum class Mode { IDLE, ENROLL, TEST }
@@ -38,8 +38,17 @@ class FaceId(private val context: Context, val store: PeopleStore) {
                val yaw: Double?, val pitch: Double?, val roll: Double?)
     class Enroll(val name: String, val samples: Int, val target: Int, val poses: List<Pair<Double, Double>>, val hint: String, val ready: Boolean)
     class Who(val name: String?, val best: Gallery.Score?, val scores: List<Gallery.Score>, val at: Long)
-    class Snapshot(val mode: Mode, val state: String, val error: String?, val face: Face?, val faceAgeMs: Long, val enroll: Enroll?, val who: Who?,
-                   val threshold: Double, val landmarkerMs: Double?, val embedMs: Double?, val fps: Double, val width: Int, val height: Int)
+    /** A face followed from frame to frame: [id] stays while it is in view, [who] is what it was last recognized as. */
+    class Tracked(val id: Int, val face: Face, val who: Who?)
+    class Snapshot(val mode: Mode, val state: String, val error: String?, val faces: List<Tracked>, val faceAgeMs: Long, val enroll: Enroll?,
+                   val threshold: Double, val landmarkerMs: Double?, val embedMs: Double?, val fps: Double, val width: Int, val height: Int) {
+        /** The biggest face (the closest person). */
+        val primary: Tracked? get() = faces.maxByOrNull { it.face.w * it.face.h }
+        val face: Face? get() = primary?.face
+        val who: Who? get() = primary?.who
+    }
+
+    private class Track(val id: Int, var face: Face, var seenAt: Long, var who: Who? = null, var embeddedAt: Long = 0)
 
     private val lock = Any()
     private val prefs by lazy { context.getSharedPreferences("people", Context.MODE_PRIVATE) }
@@ -49,15 +58,14 @@ class FaceId(private val context: Context, val store: PeopleStore) {
     private var error: String? = null
 
     @Volatile var mode = Mode.IDLE; private set
-    private var face: Face? = null
+    private val tracks = ArrayList<Track>()
+    private var nextId = 1
     private var faceAt = 0L
-    private var who: Who? = null
     private var enrollName = ""
     private val vectors = ArrayList<FloatArray>()
     private val poses = ArrayList<Pair<Double, Double>>()
     private var hint = ""
     private var lastSampleAt = 0L
-    private var lastEmbedAt = 0L
     private var landmarkerMs: Double? = null
     private var embedMs: Double? = null
     private var fps = 0.0
@@ -71,15 +79,14 @@ class FaceId(private val context: Context, val store: PeopleStore) {
     fun setMode(next: Mode) = synchronized(lock) {
         mode = next
         if (next != Mode.ENROLL) { vectors.clear(); poses.clear(); enrollName = "" }
-        if (next == Mode.IDLE) { face = null; who = null }
-        who = null; hint = ""
+        tracks.clear(); hint = ""
     }
 
     /** Starts teaching [name] (an existing person gets more samples). Returns an error code or null. */
     fun startEnroll(name: String): String? = synchronized(lock) {
         if (!PeopleStore.valid(name)) return "invalid_name"
         enrollName = name; vectors.clear(); poses.clear(); lastSampleAt = 0; hint = "Смотрите в камеру"
-        mode = Mode.ENROLL; who = null
+        mode = Mode.ENROLL; tracks.clear()
         null
     }
 
@@ -94,9 +101,9 @@ class FaceId(private val context: Context, val store: PeopleStore) {
 
     fun snapshot(): Snapshot = synchronized(lock) {
         val now = SystemClock.elapsedRealtime()
-        Snapshot(mode, state, error, face, if (faceAt == 0L) -1 else now - faceAt,
+        Snapshot(mode, state, error, tracks.filter { now - it.seenAt <= 1500 }.map { Tracked(it.id, it.face, it.who) }, if (faceAt == 0L) -1 else now - faceAt,
             if (mode == Mode.ENROLL) Enroll(enrollName, vectors.size, TARGET_SAMPLES, poses.toList(), hint, vectors.size >= MIN_SAMPLES) else null,
-            who, threshold, landmarkerMs, embedMs, fps, size.first, size.second)
+            threshold, landmarkerMs, embedMs, fps, size.first, size.second)
     }
 
     fun json(): JSONObject {
@@ -107,11 +114,14 @@ class FaceId(private val context: Context, val store: PeopleStore) {
             .put("landmarkerMs", s.landmarkerMs?.let { Math.round(it * 10) / 10.0 } ?: JSONObject.NULL)
             .put("embedMs", s.embedMs?.let { Math.round(it * 10) / 10.0 } ?: JSONObject.NULL).put("fps", Math.round(s.fps * 10) / 10.0)
         s.error?.let { json.put("error", it) }
-        json.put("face", s.face?.let { f -> JSONObject().put("x", r3(f.x)).put("y", r3(f.y)).put("w", r3(f.w)).put("h", r3(f.h)).put("angleDeg", Math.round(f.angle * 10) / 10.0)
-            .put("pose", JSONObject().put("yaw", f.yaw ?: JSONObject.NULL).put("pitch", f.pitch ?: JSONObject.NULL).put("roll", f.roll ?: JSONObject.NULL)) } ?: JSONObject.NULL)
-        json.put("who", s.who?.let { w -> JSONObject().put("name", w.name ?: JSONObject.NULL).put("ageMs", SystemClock.elapsedRealtime() - w.at)
-            .put("best", w.best?.let { JSONObject().put("name", it.name).put("similarity", r3(it.similarity)) } ?: JSONObject.NULL)
-            .put("scores", JSONObject().also { o -> w.scores.forEach { o.put(it.name, r3(it.similarity)) } }) } ?: JSONObject.NULL)
+        fun faceJson(f: Face) = JSONObject().put("x", r3(f.x)).put("y", r3(f.y)).put("w", r3(f.w)).put("h", r3(f.h)).put("angleDeg", Math.round(f.angle * 10) / 10.0)
+            .put("pose", JSONObject().put("yaw", f.yaw ?: JSONObject.NULL).put("pitch", f.pitch ?: JSONObject.NULL).put("roll", f.roll ?: JSONObject.NULL))
+        fun whoJson(w: Who?) = w?.let { JSONObject().put("name", it.name ?: JSONObject.NULL).put("ageMs", SystemClock.elapsedRealtime() - it.at)
+            .put("best", it.best?.let { b -> JSONObject().put("name", b.name).put("similarity", r3(b.similarity)) } ?: JSONObject.NULL)
+            .put("scores", JSONObject().also { o -> it.scores.forEach { sc -> o.put(sc.name, r3(sc.similarity)) } }) } ?: JSONObject.NULL
+        // face and who describe the biggest face; faces lists everyone in view.
+        json.put("face", s.face?.let { faceJson(it) } ?: JSONObject.NULL).put("who", whoJson(s.who))
+        json.put("faces", JSONArray(s.faces.map { t -> faceJson(t.face).put("id", t.id).put("who", whoJson(t.who)) }))
         return json
     }
 
@@ -142,14 +152,18 @@ class FaceId(private val context: Context, val store: PeopleStore) {
                 if (lastFrameAt != 0L) fps = smooth(if (fps == 0.0) null else fps, 1000.0 / maxOf(1L, now - lastFrameAt))!!
                 lastFrameAt = now; size = uw to uh
             }
-            val marks = result.faceLandmarks().firstOrNull()
-            if (marks == null || marks.size < 478) { lost(now); return }
-            val m = result.facialTransformationMatrixes().orElse(null)?.firstOrNull()?.takeIf { it.size >= 16 }
-            val seen = describe(marks.map { it.x() to it.y() }, m, uw, uh)
-            synchronized(lock) { face = seen; faceAt = now }
+            val all = result.faceLandmarks().filter { it.size >= 478 }
+            if (all.isEmpty()) { lost(now); return }
+            val matrices = result.facialTransformationMatrixes().orElse(null)
+            val points = all.map { marks -> marks.map { it.x() to it.y() } }
+            val seen = points.mapIndexed { i, p -> describe(p, matrices?.getOrNull(i)?.takeIf { it.size >= 16 }, uw, uh) }
+            val followed = follow(seen, now)
+            synchronized(lock) { faceAt = now }
             when (mode) {
-                Mode.ENROLL -> enrolStep(seen, upright, marks.map { it.x() to it.y() }, now)
-                Mode.TEST -> testStep(seen, upright, marks.map { it.x() to it.y() }, now)
+                Mode.ENROLL ->
+                    if (seen.size > 1) synchronized(lock) { hint = "В кадре должен быть один человек" }
+                    else enrolStep(seen[0], upright, points[0], now)
+                Mode.TEST -> testStep(followed, points, upright, now)
                 Mode.IDLE -> {}
             }
         } catch (e: Exception) {
@@ -169,15 +183,27 @@ class FaceId(private val context: Context, val store: PeopleStore) {
         embedder = embedder ?: FaceEmbedder(context)
         landmarker = landmarker ?: FaceLandmarker.createFromOptions(context, FaceLandmarker.FaceLandmarkerOptions.builder()
             .setBaseOptions(BaseOptions.builder().setModelAssetPath("face_landmarker/face_landmarker.task").build())
-            .setRunningMode(RunningMode.IMAGE).setNumFaces(1).setMinFaceDetectionConfidence(0.5f)
+            .setRunningMode(RunningMode.IMAGE).setNumFaces(MAX_FACES).setMinFaceDetectionConfidence(0.5f)
             .setOutputFaceBlendshapes(false).setOutputFacialTransformationMatrixes(true).build())
         synchronized(lock) { state = "ready" }
     }
 
     private fun lost(now: Long) = synchronized(lock) {
-        face = null
+        tracks.removeAll { now - it.seenAt > FORGET_AFTER_MS }
         if (mode == Mode.ENROLL) hint = "Лицо не найдено. Держите телефон на уровне глаз"
-        if (mode == Mode.TEST && who != null && now - who!!.at > FORGET_AFTER_MS) who = null
+    }
+
+    /** Matches the faces of this frame to the ones followed before by the nearest centre; a face with no match starts a new track. */
+    private fun follow(faces: List<Face>, now: Long): List<Track> = synchronized(lock) {
+        val free = ArrayList(tracks)
+        val matched = faces.map { f ->
+            val cx = f.x + f.w / 2; val cy = f.y + f.h / 2
+            val near = free.minByOrNull { hypot(it.face.x + it.face.w / 2 - cx, it.face.y + it.face.h / 2 - cy) }
+                ?.takeIf { hypot(it.face.x + it.face.w / 2 - cx, it.face.y + it.face.h / 2 - cy) < FOLLOW_DISTANCE }
+            if (near != null) { free.remove(near); near.face = f; near.seenAt = now; near } else Track(nextId++, f, now).also { tracks.add(it) }
+        }
+        tracks.removeAll { now - it.seenAt > FORGET_AFTER_MS }
+        matched
     }
 
     /** The frame of the face (fitted in the tilted frame of the eyes, as in the lab), and its head pose from the transformation matrix. */
@@ -251,13 +277,15 @@ class FaceId(private val context: Context, val store: PeopleStore) {
         }
     }
 
-    private fun testStep(f: Face, source: Bitmap, marks: List<Pair<Float, Float>>, now: Long) {
-        if (now - lastEmbedAt < EMBED_EVERY_MS) return
-        if (f.w < MIN_FACE_WIDTH * 0.8 || (f.yaw != null && abs(f.yaw) > 55)) return
-        lastEmbedAt = now
-        val v = embedOf(source, marks)
+    /** At most one face per frame is recognized: a new face first, then the one recognized longest ago. */
+    private fun testStep(tracked: List<Track>, points: List<List<Pair<Float, Float>>>, source: Bitmap, now: Long) {
+        val due = tracked.indices.filter { i ->
+            val t = tracked[i]; val f = t.face
+            f.w >= MIN_FACE_WIDTH * 0.8 && (f.yaw == null || abs(f.yaw) <= 55) && (t.who == null || now - t.embeddedAt >= REEMBED_MS)
+        }.minByOrNull { tracked[it].embeddedAt } ?: return
+        val v = embedOf(source, points[due])
         val decision = store.gallery().decide(v, threshold)
-        synchronized(lock) { who = Who(decision.name, decision.best, decision.scores, SystemClock.elapsedRealtime()) }
+        synchronized(lock) { tracked[due].who = Who(decision.name, decision.best, decision.scores, SystemClock.elapsedRealtime()); tracked[due].embeddedAt = now }
     }
 
     private companion object {
@@ -270,7 +298,9 @@ class FaceId(private val context: Context, val store: PeopleStore) {
         const val MIN_POSE_STEP = 7.0
         const val MIN_GAP_MS = 400L
         const val SAME_PERSON_FLOOR = 0.25
-        const val EMBED_EVERY_MS = 700L
+        const val REEMBED_MS = 1500L
+        const val FOLLOW_DISTANCE = 0.2
+        const val MAX_FACES = 3
         const val FORGET_AFTER_MS = 1500L
         /** Where the model expects the pupils, nose tip and mouth corners in its 112x112 input (the usual ArcFace template). */
         val TEMPLATE = doubleArrayOf(38.2946, 51.6963, 73.5318, 51.5014, 56.0252, 71.7366, 41.5493, 92.3655, 70.7299, 92.2041)

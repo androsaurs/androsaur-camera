@@ -94,8 +94,10 @@ class McpEndpoint(private val camera: CameraService) {
             schema(props = mapOf("enabled" to prop("boolean", "Start or stop the experiment."), "reset" to prop("boolean", "Restart the counters."),
                 "mode" to prop("string", "Mode A (only the camera chip), B (+ ML Kit), C (+ MediaPipe, the default), D (all three) or E (+ MediaPipe Face Landmarker, 478 points and head pose); the counters of each mode are kept, see modes in the reply. The same modes can be switched on the phone screen (lab button in the app)."),
                 "detectors" to JSONObject().put("type", "array").put("items", JSONObject().put("type", "string")).put("description", "Software detectors to run: [] (hardware only), [mlkit], [mediapipe], [mlkit, mediapipe] or [landmarker]; picks mode A, B, C or D accordingly."))), idempotent = true))
-        .put(tool("people", "Who the camera knows and what it sees now: the people taught on the phone's People screen (names and how many samples each), the recognizer state, the match threshold (cosine similarity, higher is stricter), timing, the face seen now (frame, tilt, head pose) and who it was recognized as (name or null, the best match and the similarity to every person). Recognition runs only while the People screen is in test mode; it works on one face, with the front camera. Faces are taught on the phone, not through this API; only vectors of numbers are stored, never pictures.",
+        .put(tool("people", "Who the camera knows and what it sees now: the people taught on the phone's People screen (names and how many samples each), the recognizer state, the match threshold (cosine similarity, higher is stricter), timing, the faces seen now (faces: id, frame, tilt, head pose and for each who it was recognized as: name or null, the best match and the similarity to every person; face and who repeat the biggest one). Recognition runs only while the People screen is in test mode; it follows up to 3 faces at once, with the front camera. Faces are taught on the phone, not through this API; only vectors of numbers are stored, never pictures.",
             schema(), readOnly = true))
+        .put(tool("rename_person", "Give a taught person another name (to fix a typo). Their face vectors stay. Errors: unknown_person, invalid_name (letters, digits, space, dash, up to 40), name_taken.",
+            schema(listOf("name", "to"), mapOf("name" to prop("string", "The current name."), "to" to prop("string", "The new name."))), idempotent = true))
         .put(tool("forget_person", "Delete a taught person (their face vectors) from the phone.",
             schema(listOf("name"), mapOf("name" to prop("string", "The name as shown by people."))), destructive = true))
         .put(tool("torch", "Turn the constant torch on or off. The torch is shared with every other client of the camera.",
@@ -148,6 +150,10 @@ class McpEndpoint(private val camera: CameraService) {
                 toolResult(value, error = code !in 200..299)
             }
             "people" -> toolResult(camera.faceId.json())
+            "rename_person" -> {
+                val problem = camera.faceId.store.rename(args.getString("name"), args.getString("to").trim())
+                toolResult(if (problem == null) JSONObject().put("ok", true) else JSONObject().put("error", problem), error = problem != null)
+            }
             "forget_person" -> {
                 val ok = camera.faceId.store.forget(args.getString("name"))
                 toolResult(if (ok) JSONObject().put("ok", true) else JSONObject().put("error", "unknown_person"), error = !ok)

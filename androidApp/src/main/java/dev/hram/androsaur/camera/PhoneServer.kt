@@ -123,6 +123,10 @@ class PhoneServer(private val camera: CameraService, private val token: String) 
                     else { val (code, value) = camera.setLens(wanted); json(socket, code, value) }
                 }
                 "GET /people", "GET /who" -> json(socket, 200, camera.faceId.json())
+                "POST /people/rename" -> {
+                    val problem = camera.faceId.store.rename(body.getString("name"), body.getString("to").trim())
+                    json(socket, if (problem == null) 200 else if (problem == "unknown_person") 404 else 409, if (problem == null) JSONObject().put("ok", true) else JSONObject().put("error", problem))
+                }
                 "POST /people/forget" -> {
                     val ok = camera.faceId.store.forget(body.getString("name"))
                     json(socket, if (ok) 200 else 404, JSONObject().put(if (ok) "ok" else "error", if (ok) true else "unknown_person"))
