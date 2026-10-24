@@ -11,6 +11,7 @@
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>
         <activity android:name=".CalibrationActivity" android:exported="false" />
+        <activity android:name=".FaceLabActivity" android:exported="false" android:screenOrientation="portrait" />
         <service android:name=".CameraService" android:exported="false" android:foregroundServiceType="camera" />
     </application>
 </manifest>

@@ -56,6 +56,9 @@ class MainActivity : ComponentActivity() {
                         OutlinedButton(onClick = {
                             startActivity(Intent(this@MainActivity, CalibrationActivity::class.java))
                         }, modifier = Modifier.fillMaxWidth()) { Text("Калибровка") }
+                        OutlinedButton(onClick = {
+                            startActivity(Intent(this@MainActivity, FaceLabActivity::class.java))
+                        }, modifier = Modifier.fillMaxWidth()) { Text("Лаборатория лиц") }
                         Button(onClick = { requestStart() }, modifier = Modifier.fillMaxWidth()) { Text("Запустить камеру") }
                         OutlinedButton(onClick = {
                             manuallyStopped = true

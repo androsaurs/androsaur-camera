@@ -125,7 +125,7 @@ class PhoneServer(private val camera: CameraService, private val token: String) 
                 "GET /faces" -> json(socket, 200, camera.setFaceLab(null, false).second)
                 "POST /faces" -> {
                     val (code, value) = camera.setFaceLab(if (body.has("enabled")) body.getBoolean("enabled") else null, body.optBoolean("reset", false),
-                        body.optJSONArray("detectors")?.let { list -> (0 until list.length()).map { list.getString(it) } })
+                        body.optString("mode").ifEmpty { null }, body.optJSONArray("detectors")?.let { list -> (0 until list.length()).map { list.getString(it) } })
                     json(socket, code, value)
                 }
                 "GET /focus" -> json(socket, 200, camera.focusStatus())

@@ -109,6 +109,9 @@ class CameraService : Service(), LifecycleOwner {
     /** Face-detector experiments; see [FaceLab]. Front camera only, off by default, and it keeps the camera awake while on. */
     val faceLab by lazy { FaceLab(this) }
     @Volatile private var faceLabOn = false
+    /** The lab screen's preview, while it is open; the lens it switched away from is restored when it closes. */
+    private var faceView: PreviewView? = null
+    private var lensBeforeLab: Lens? = null
     private var calibrationView: PreviewView? = null
     private var calibrationCallback: ((CalibrationFrame) -> Unit)? = null
     private var calibrationAnalyzer: CalibrationAnalyzer? = null
@@ -212,9 +215,10 @@ class CameraService : Service(), LifecycleOwner {
             if (ledger.capturing) return 409 to JSONObject().put("error", "camera_busy")
             if (calibrationMode || calibrationSessions.hasClients(SystemClock.elapsedRealtime())) return 409 to JSONObject().put("error", "calibration_active")
             if (focusController.busy) return 409 to JSONObject().put("error", "focus_busy")
+            if (faceView != null) return 409 to JSONObject().put("error", "lab_screen_open")
             if (wanted == lens) return 200 to JSONObject().put("lens", wanted.id).put("changed", false)
             lens = wanted
-            if (wanted == Lens.BACK) faceLabOn = false
+            if (wanted == Lens.BACK) { faceLabOn = false; faceLab.setRunning(false) }
             cameraPreferences.edit().putString("lens", wanted.id).apply()
             lastSeen = SystemClock.elapsedRealtime()
             latestFrame = null; supportedSizes = emptyList()
@@ -223,20 +227,53 @@ class CameraService : Service(), LifecycleOwner {
         return 200 to JSONObject().put("lens", wanted.id).put("changed", true)
     }
 
-    /** Starts or stops the face-detector experiment (front camera only) and optionally restarts its counters. */
-    fun setFaceLab(enabled: Boolean?, reset: Boolean, software: List<String>? = null): Pair<Int, JSONObject> {
+    /** The modes by the software detectors they run: A none (only the camera chip's), B ML Kit, C MediaPipe, D both. */
+    private fun modeOf(detectors: List<String>): String? = when (detectors.toSet()) {
+        emptySet<String>() -> "A"; setOf("mlkit") -> "B"; setOf("mediapipe") -> "C"; setOf("mlkit", "mediapipe") -> "D"; else -> null
+    }
+
+    /** Starts or stops the face-detector experiment without a screen (front camera only) and sets its mode or counters. */
+    fun setFaceLab(enabled: Boolean?, reset: Boolean, mode: String? = null, detectors: List<String>? = null): Pair<Int, JSONObject> {
         if (enabled == true && lens != Lens.FRONT) return 409 to JSONObject().put("error", "front_camera_required")
-        if (software != null) {
-            if (!software.all { it == "mlkit" || it == "mediapipe" }) return 400 to JSONObject().put("error", "invalid_detectors").put("detectors", JSONArray().put("mlkit").put("mediapipe"))
-            faceLab.software = software.toSet(); faceLab.reset()
-        }
+        if (enabled == false && faceView != null) return 409 to JSONObject().put("error", "lab_screen_open")
+        val wanted = mode ?: detectors?.let { modeOf(it) ?: return 400 to JSONObject().put("error", "invalid_detectors").put("detectors", JSONArray().put("mlkit").put("mediapipe")) }
+        if (wanted != null && !faceLab.switchTo(wanted)) return 400 to JSONObject().put("error", "invalid_mode").put("modes", JSONArray().put("A").put("B").put("C").put("D"))
         if (reset) faceLab.reset()
         if (enabled != null && enabled != faceLabOn) {
             if (enabled) { faceLab.reset(); lastSeen = SystemClock.elapsedRealtime() }
-            faceLabOn = enabled
+            faceLabOn = enabled; faceLab.setRunning(enabled)
             main.post { if (!closing && provider != null) { if (enabled || camera != null) bindCamera() } }
         }
-        return 200 to faceLab.json().put("enabled", faceLabOn).put("lens", lens.id)
+        return 200 to faceLab.json().put("enabled", faceLabOn).put("screen", faceView != null).put("lens", lens.id)
+    }
+
+    /** The lab screen opens: switch to the front camera for now (the saved choice stays), show its preview in [view] and start the detectors. */
+    fun startFaceLab(view: PreviewView): Pair<Int, JSONObject> {
+        synchronized(gate) {
+            if (Lens.FRONT !in availableLenses) return 409 to JSONObject().put("error", "lens_unavailable")
+            if (ledger.capturing) return 409 to JSONObject().put("error", "camera_busy")
+            if (calibrationMode || calibrationSessions.hasClients(SystemClock.elapsedRealtime())) return 409 to JSONObject().put("error", "calibration_active")
+            if (faceView != null && faceView !== view) return 409 to JSONObject().put("error", "lab_screen_open")
+            if (lens != Lens.FRONT) { lensBeforeLab = lens; lens = Lens.FRONT; supportedSizes = emptyList() }
+            faceView = view
+            if (!faceLabOn) faceLab.reset()
+            faceLabOn = true; faceLab.setRunning(true)
+            lastSeen = SystemClock.elapsedRealtime(); latestFrame = null
+        }
+        main.post { if (!closing && provider != null) { cameraState = "starting"; bindCamera() } }
+        return 200 to JSONObject().put("lens", "front")
+    }
+
+    /** The lab screen closes: stop the detectors and put the camera back as it was. */
+    fun stopFaceLab(view: PreviewView) {
+        synchronized(gate) {
+            if (faceView !== view) return
+            faceView = null; faceLabOn = false; faceLab.setRunning(false)
+            lensBeforeLab?.let { lens = it; supportedSizes = emptyList() }
+            lensBeforeLab = null
+            latestFrame = null
+        }
+        main.post { if (!closing && provider != null && camera != null) { cameraState = "starting"; bindCamera() } }
     }
 
     private fun lensesJson() = JSONArray(availableLenses.map { it.id })
@@ -441,7 +478,12 @@ class CameraService : Service(), LifecycleOwner {
                 } catch (e: Exception) { Log.w("AndrosaurCamera", "Preview encoding failed", e) }
                 finally { image.close() }
             }
-            camera = p.bindToLifecycle(this, selectorFor(lens), photo, analysis)
+            val labView = faceView
+            val labPreview = if (lab && labView != null) Preview.Builder()
+                .setResolutionSelector(ResolutionSelector.Builder().setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY).build()).build()
+                .also { it.setSurfaceProvider(labView.surfaceProvider) } else null
+            camera = if (labPreview != null) p.bindToLifecycle(this, selectorFor(lens), photo, analysis, labPreview)
+                else p.bindToLifecycle(this, selectorFor(lens), photo, analysis)
             meteringAnalysis = analysis
             if (documentFocus) focusController.attach(camera!!)
             capture = photo
