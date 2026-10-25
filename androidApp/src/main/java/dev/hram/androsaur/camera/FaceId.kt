@@ -123,16 +123,16 @@ class FaceId(private val context: Context, val store: PeopleStore) {
 
     fun json(): JSONObject {
         val s = snapshot()
-        val people = JSONArray(store.names().map { JSONObject().put("name", it).put("samples", store.samples(it)) })
+        val people = JSONArray(store.names().map { JSONObject().put("id", store.idOf(it)).put("name", it).put("samples", store.samples(it)).put("digest", store.digest(it)) })
         val json = JSONObject().put("mode", s.mode.name.lowercase()).put("state", s.state).put("threshold", s.threshold)
             .put("identifyingMs", identifyUntil.let { if (it == 0L) 0L else maxOf(0L, it - SystemClock.elapsedRealtime()) })
-            .put("model", JSONObject().put("name", "SFace int8").put("dimensions", 128)).put("people", people)
+            .put("model", JSONObject().put("name", "SFace int8").put("dimensions", 128).put("id", MODEL)).put("people", people)
             .put("landmarkerMs", s.landmarkerMs?.let { Math.round(it * 10) / 10.0 } ?: JSONObject.NULL)
             .put("embedMs", s.embedMs?.let { Math.round(it * 10) / 10.0 } ?: JSONObject.NULL).put("fps", Math.round(s.fps * 10) / 10.0)
         s.error?.let { json.put("error", it) }
         fun faceJson(f: Face) = JSONObject().put("x", r3(f.x)).put("y", r3(f.y)).put("w", r3(f.w)).put("h", r3(f.h)).put("angleDeg", Math.round(f.angle * 10) / 10.0)
             .put("pose", JSONObject().put("yaw", f.yaw ?: JSONObject.NULL).put("pitch", f.pitch ?: JSONObject.NULL).put("roll", f.roll ?: JSONObject.NULL))
-        fun whoJson(w: Who?) = w?.let { JSONObject().put("name", it.name ?: JSONObject.NULL).put("ageMs", SystemClock.elapsedRealtime() - it.at)
+        fun whoJson(w: Who?) = w?.let { JSONObject().put("id", store.idOf(it.name) ?: JSONObject.NULL).put("name", it.name ?: JSONObject.NULL).put("ageMs", SystemClock.elapsedRealtime() - it.at)
             .put("best", it.best?.let { b -> JSONObject().put("name", b.name).put("similarity", r3(b.similarity)) } ?: JSONObject.NULL)
             .put("scores", JSONObject().also { o -> it.scores.forEach { sc -> o.put(sc.name, r3(sc.similarity)) } }) } ?: JSONObject.NULL
         // face and who describe the biggest face; faces lists everyone in view.
@@ -317,20 +317,22 @@ class FaceId(private val context: Context, val store: PeopleStore) {
         synchronized(lock) { tracked[due].who = Who(decision.name, decision.best, decision.scores, SystemClock.elapsedRealtime()); tracked[due].embeddedAt = now }
     }
 
-    private companion object {
-        const val TAG = "AndrosaurCamera"
-        const val TARGET_SAMPLES = 12
-        const val MIN_SAMPLES = 5
-        const val MIN_FACE_WIDTH = 0.18
-        const val MAX_YAW = 40.0
-        const val MAX_PITCH = 35.0
-        const val MIN_POSE_STEP = 7.0
-        const val MIN_GAP_MS = 400L
-        const val SAME_PERSON_FLOOR = 0.25
-        const val REEMBED_MS = 1500L
-        const val FOLLOW_DISTANCE = 0.2
-        const val MAX_FACES = 3
-        const val FORGET_AFTER_MS = 1500L
+    companion object {
+        /** The face model whose sets this camera keeps; sets of another model cannot be compared with them. */
+        const val MODEL = "SFace int8/128"
+        private const val TAG = "AndrosaurCamera"
+        private const val TARGET_SAMPLES = 12
+        private const val MIN_SAMPLES = 5
+        private const val MIN_FACE_WIDTH = 0.18
+        private const val MAX_YAW = 40.0
+        private const val MAX_PITCH = 35.0
+        private const val MIN_POSE_STEP = 7.0
+        private const val MIN_GAP_MS = 400L
+        private const val SAME_PERSON_FLOOR = 0.25
+        private const val REEMBED_MS = 1500L
+        private const val FOLLOW_DISTANCE = 0.2
+        private const val MAX_FACES = 3
+        private const val FORGET_AFTER_MS = 1500L
         /** Where the model expects the pupils, nose tip and mouth corners in its 112x112 input (the usual ArcFace template). */
         val TEMPLATE = doubleArrayOf(38.2946, 51.6963, 73.5318, 51.5014, 56.0252, 71.7366, 41.5493, 92.3655, 70.7299, 92.2041)
     }

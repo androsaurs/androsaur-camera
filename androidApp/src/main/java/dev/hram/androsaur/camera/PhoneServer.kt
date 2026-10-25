@@ -81,7 +81,9 @@ class PhoneServer(private val camera: CameraService, private val token: String) 
                 json(socket, 401, JSONObject().put("error", "unauthorized")); return
             }
             val length = headers["content-length"]?.toIntOrNull() ?: 0
-            require(length in 0..16384 && "transfer-encoding" !in headers)
+            // Small bodies everywhere, except the people of the house with their sets of numbers (up to 60 per person).
+            val limit = if (method == "POST" && uri.path == "/people/import") 4_000_000 else 16384
+            require(length in 0..limit && "transfer-encoding" !in headers)
             val bodyBytes = ByteArray(length)
             var received = 0
             while (received < length) {
@@ -127,12 +129,37 @@ class PhoneServer(private val camera: CameraService, private val token: String) 
                     val (code, value) = camera.identify(body.optLong("ms", 3500))
                     json(socket, code, value)
                 }
+                // The sets of numbers of the faces: only for apps signed with the same key (the main app passes them to the hub).
+                "GET /people/export" -> {
+                    val list = JSONArray(camera.faceId.store.export().map { (id, name, vectors) ->
+                        JSONObject().put("id", id).put("name", name).put("vectors", JSONArray(vectors.map { v -> JSONArray(v.map { it.toDouble() }) }))
+                    })
+                    json(socket, 200, JSONObject().put("model", FaceId.MODEL).put("people", list))
+                }
+                "POST /people/import" -> {
+                    if (body.optString("model") != FaceId.MODEL) json(socket, 409, JSONObject().put("error", "model_mismatch").put("model", FaceId.MODEL))
+                    else {
+                        val list = body.getJSONArray("people")
+                        val people = List(list.length()) { list.getJSONObject(it) }.map { o ->
+                            val vs = o.getJSONArray("vectors")
+                            Triple(o.getString("id"), o.getString("name").trim(), List(vs.length()) { k -> val v = vs.getJSONArray(k); FloatArray(v.length()) { v.getDouble(it).toFloat() } })
+                        }
+                        val errors = camera.faceId.store.import(people)
+                        json(socket, 200, JSONObject().put("ok", true).put("errors", JSONObject(errors as Map<*, *>)))
+                    }
+                }
+                "POST /people/merge" -> {
+                    val problem = camera.faceId.store.merge(body.getString("from"), body.getString("into"), body.getString("name").trim())
+                    json(socket, if (problem == null) 200 else if (problem == "unknown_person") 404 else 409, if (problem == null) JSONObject().put("ok", true) else JSONObject().put("error", problem))
+                }
                 "POST /people/rename" -> {
-                    val problem = camera.faceId.store.rename(body.getString("name"), body.getString("to").trim())
+                    val store = camera.faceId.store
+                    val name = store.find(body.optString("id"), body.optString("name"))
+                    val problem = if (name == null) "unknown_person" else store.rename(name, body.getString("to").trim())
                     json(socket, if (problem == null) 200 else if (problem == "unknown_person") 404 else 409, if (problem == null) JSONObject().put("ok", true) else JSONObject().put("error", problem))
                 }
                 "POST /people/forget" -> {
-                    val ok = camera.faceId.store.forget(body.getString("name"))
+                    val ok = camera.faceId.store.let { st -> st.find(body.optString("id"), body.optString("name"))?.let { st.forget(it) } ?: false }
                     json(socket, if (ok) 200 else 404, JSONObject().put(if (ok) "ok" else "error", if (ok) true else "unknown_person"))
                 }
                 "GET /faces" -> json(socket, 200, camera.setFaceLab(null, false).second)
