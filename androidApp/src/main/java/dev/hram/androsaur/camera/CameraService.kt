@@ -116,6 +116,9 @@ class CameraService : Service(), LifecycleOwner {
     private var faceView: PreviewView? = null
     private var lensBeforeLab: Lens? = null
     private var calibrationView: PreviewView? = null
+    private var qrView: PreviewView? = null
+    private var qrCallback: ((String) -> Unit)? = null
+    private var qrAnalyzer: SetupQrAnalyzer? = null
     private var calibrationCallback: ((CalibrationFrame) -> Unit)? = null
     private var calibrationAnalyzer: CalibrationAnalyzer? = null
     private val calibrationPreferences by lazy { getSharedPreferences("calibration", MODE_PRIVATE) }
@@ -134,7 +137,7 @@ class CameraService : Service(), LifecycleOwner {
             if (changed) reconfigureCalibration()
             agentStore.sweep()
             registerLightSensor()
-            if (faceLabOn || peopleOn) lastSeen = SystemClock.elapsedRealtime()
+            if (faceLabOn || peopleOn || qrView != null) lastSeen = SystemClock.elapsedRealtime()
             val idle = synchronized(gate) { !ledger.capturing }
             if (idle && !calibrationMode && SystemClock.elapsedRealtime() - lastSeen > 15_000 && camera != null) {
                 focusController.detach(); provider?.unbindAll(); camera = null; capture = null; latestFrame = null
@@ -175,7 +178,7 @@ class CameraService : Service(), LifecycleOwner {
                     availableLenses = Lens.entries.filter { provider?.hasCamera(selectorFor(it)) == true }
                     // A phone without the default camera uses the one it has.
                     if (lens !in availableLenses && availableLenses.isNotEmpty()) lens = availableLenses.first()
-                    if (calibrationMode) bindCamera()
+                    if (calibrationMode || qrView != null) bindCamera()
                 }
                 catch (e: Exception) { cameraState = "needs_user"; cameraError = e.message }
             }
@@ -191,6 +194,7 @@ class CameraService : Service(), LifecycleOwner {
         nsd.stop()
         if (::server.isInitialized) server.close()
         calibrationAnalyzer?.close()
+        qrAnalyzer?.close(); qrView = null; qrCallback = null
         calibrationView = null; calibrationCallback = null
         focusController.detach()
         provider?.unbindAll()
@@ -216,6 +220,7 @@ class CameraService : Service(), LifecycleOwner {
      * switch is refused during an exposure or a calibration session and those requests are refused while the front one is selected.
      */
     fun setLens(wanted: Lens): Pair<Int, JSONObject> {
+        if (qrView != null) return 409 to JSONObject().put("error", "qr_scanner_active")
         synchronized(gate) {
             if (wanted !in availableLenses) return 409 to JSONObject().put("error", "lens_unavailable").put("lenses", lensesJson())
             if (ledger.capturing) return 409 to JSONObject().put("error", "camera_busy")
@@ -393,10 +398,27 @@ class CameraService : Service(), LifecycleOwner {
             .put("jpegBase64", Base64.encodeToString(frame.jpeg, Base64.NO_WRAP))
     }
 
+    /** Temporary back-camera lease, preserving lens choice, face tracking and capture results. */
+    fun beginSetupQr(view: PreviewView, callback: (String) -> Unit): Boolean {
+        synchronized(gate) {
+            if (ledger.capturing || calibrationMode || qrView != null || faceView != null) return false
+            qrView = view; qrCallback = callback
+        }
+        lastSeen = SystemClock.elapsedRealtime()
+        if (provider != null) bindCamera()
+        return true
+    }
+    fun endSetupQr(view: PreviewView) {
+        if (qrView !== view) return
+        qrView = null; qrCallback = null
+        qrAnalyzer?.close(); qrAnalyzer = null
+        if (!closing && provider != null) bindCamera()
+    }
+
     /** Main-thread only; a calibration session never interrupts an exposure or deletes a result. */
     fun beginCalibration(view: PreviewView, callback: (CalibrationFrame) -> Unit): Boolean {
         synchronized(gate) {
-            if (ledger.capturing || calibrationView != null || lens == Lens.FRONT) return false
+            if (ledger.capturing || calibrationView != null || qrView != null || lens == Lens.FRONT) return false
             calibrationView = view
             calibrationCallback = callback
             updateCalibrationModeLocked()
@@ -442,8 +464,22 @@ class CameraService : Service(), LifecycleOwner {
         try {
             focusController.detach()
             p.unbindAll()
+            qrAnalyzer?.close(); qrAnalyzer = null
             calibrationAnalyzer?.close(); calibrationAnalyzer = null
             val analysisGeneration = ++calibrationGeneration
+            qrView?.let { view ->
+                val preview = Preview.Builder().build().also { it.setSurfaceProvider(view.surfaceProvider) }
+                val analysis = ImageAnalysis.Builder().setTargetResolution(Size(1280, 960))
+                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build()
+                val analyzer = SetupQrAnalyzer(executor) { raw ->
+                    main.post { if (qrView === view && analysisGeneration == calibrationGeneration && !closing) qrCallback?.invoke(raw) }
+                }
+                qrAnalyzer = analyzer; analysis.setAnalyzer(executor, analyzer)
+                camera = p.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
+                capture = null; meteringAnalysis = analysis; focusController.attach(camera!!)
+                cameraState = "scanning-setup"; cameraError = null
+                return
+            }
             if (calibrationMode) {
                 val view = calibrationView
                 val rotation = view?.display?.rotation ?: Surface.ROTATION_0
