@@ -6,8 +6,8 @@ android {
         applicationId = "dev.hram.androsaur.camera"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3-wifi-qr"
+        versionCode = 4
+        versionName = "0.4-tracking-observations"
         // Phones only: ONNX Runtime and MediaPipe carry a native library per architecture, and x86 doubles the APK.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }

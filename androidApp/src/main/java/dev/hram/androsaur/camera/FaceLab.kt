@@ -31,6 +31,7 @@ import kotlin.math.asin
  * Boxes are fractions 0-1 of the upright, unmirrored image (x to the right, y downwards).
  */
 class FaceLab(private val context: Context) {
+    private val bootId = java.util.UUID.randomUUID().toString()
     /**
      * A face frame: fractions of the upright, unmirrored image; [angle] is the head tilt in degrees, clockwise in that image
      * (the frame is turned about its centre); [points] are landmarks as x,y pairs of fractions; [pose] is pitch/yaw/roll text.
@@ -49,12 +50,14 @@ class FaceLab(private val context: Context) {
         var loadMs = 0L; var state = "idle"; var error: String? = null
         var last: List<Box> = emptyList()
         var lastAt = 0L
-        fun add(elapsed: Long, found: List<Box>) {
+        var sampledAt = 0L
+        fun add(elapsed: Long, found: List<Box>, sampleTime: Long = SystemClock.elapsedRealtime()) {
             nanos[count++ % nanos.size] = elapsed
             frames++; faces += found.size; if (found.isNotEmpty()) withFace++
             last = found; lastAt = SystemClock.elapsedRealtime()
+            sampledAt = sampleTime
         }
-        fun clear() { frames = 0; withFace = 0; faces = 0; convertNanos = 0; count = 0; nanos.fill(0); last = emptyList(); lastAt = 0 }
+        fun clear() { frames = 0; withFace = 0; faces = 0; convertNanos = 0; count = 0; nanos.fill(0); last = emptyList(); lastAt = 0; sampledAt = 0 }
         fun recentMs(): Double? = if (count == 0) null else {
             val n = minOf(count, 20)
             (1 until n + 1).sumOf { nanos[(count - it) % nanos.size] } / n / 1e6
@@ -191,6 +194,7 @@ class FaceLab(private val context: Context) {
     }
 
     private fun runMediaPipe(image: ImageProxy, degrees: Int, uw: Int, uh: Int) {
+        val sampledAt = SystemClock.elapsedRealtime()
         try {
             if (mediapipeDetector == null) {
                 val began = SystemClock.elapsedRealtime()
@@ -214,7 +218,7 @@ class FaceLab(private val context: Context) {
                     d.categories().firstOrNull()?.score()?.toDouble(), angle = tilt) }
             }
             if (turned !== raw) raw.recycle(); turned.recycle()
-            synchronized(lock) { mediapipe.convertNanos += converted; mediapipe.add(elapsed, boxes) }
+            synchronized(lock) { mediapipe.convertNanos += converted; mediapipe.add(elapsed, boxes, sampledAt) }
         } catch (e: Exception) {
             Log.w(TAG, "MediaPipe face detection failed", e)
             synchronized(lock) { infoMp.state = "failed"; infoMp.error = "${e.javaClass.simpleName}: ${e.message}".take(160) }
@@ -312,6 +316,8 @@ class FaceLab(private val context: Context) {
 
     private fun describe(s: Stats, info: Info, windowMs: Long, timed: Boolean): JSONObject {
         val json = JSONObject().put("state", info.state).put("frames", s.frames).put("framesWithFace", s.withFace).put("faces", s.faces)
+            .put("frameId", if (s.sampledAt == 0L) "" else "$bootId:$mode:${s.sampledAt}")
+            .put("sampledAtMs", s.sampledAt)
             .put("framesPerSecond", if (windowMs > 0) Math.round(s.frames * 10000.0 / windowMs) / 10.0 else 0.0)
         if (info.loadMs > 0) json.put("loadMs", info.loadMs)
         info.error?.let { json.put("error", it) }
